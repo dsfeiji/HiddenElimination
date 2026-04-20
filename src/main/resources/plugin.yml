@@ -1,0 +1,15 @@
+name: HiddenElimination
+version: 1.0.0
+main: com.hiddenelimination.HiddenEliminationPlugin
+api-version: "1.21"
+author: HiddenElimination
+
+commands:
+  he:
+    description: HiddenElimination 主命令
+    usage: /he <join|leave|ready|unready|start|stop|status|setlobby|help>
+
+permissions:
+  hiddenelimination.admin:
+    description: HiddenElimination 管理员权限
+    default: op

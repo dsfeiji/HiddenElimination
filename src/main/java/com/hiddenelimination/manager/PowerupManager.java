@@ -1,0 +1,1164 @@
+package com.hiddenelimination.manager;
+
+import com.hiddenelimination.HiddenEliminationPlugin;
+import com.hiddenelimination.model.ConditionType;
+import com.hiddenelimination.model.PlayerGameData;
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemFlag;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.inventory.meta.CompassMeta;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
+
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class PowerupManager {
+
+    private static final String MENU_TITLE = ChatColor.GOLD + "道具兑换";
+    private static final String RULE_TOOL_MENU_TITLE = ChatColor.YELLOW + "规则道具";
+    private static final String PROBE_MENU_TITLE = ChatColor.YELLOW + "规则试探";
+    private static final String ARMOR_MENU_TITLE = ChatColor.GREEN + "积分兑换套装";
+    private static final String ORE_MENU_TITLE = ChatColor.AQUA + "矿物兑换积分";
+    private static final int MENU_SIZE = 27;
+
+    private static final int SLOT_RULE_TOOL = 10;
+    private static final int SLOT_ARMOR_SET = 12;
+    private static final int SLOT_ORE_EXCHANGE = 14;
+    private static final int SLOT_RULE_SHIELD = 13;
+    private static final int SLOT_FAKE_BROADCAST = 16;
+    private static final int SLOT_INFO = 22;
+    private static final int SLOT_BACK = 22;
+
+    private static final int[] PROBE_SELECT_SLOTS = {
+            10, 11, 12, 13, 14, 15, 16,
+            19, 20, 21, 23, 24, 25,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 17, 18, 26
+    };
+    private static final int[] ARMOR_SELECT_SLOTS = {10, 11, 12, 14, 15, 16};
+    private static final int[] ORE_SELECT_SLOTS = {10, 11, 12, 13, 14, 15, 16, 19, 20, 21};
+
+    private final HiddenEliminationPlugin plugin;
+    private final PlayerDataManager playerDataManager;
+    private final UIManager uiManager;
+    private final Random random = new Random();
+
+    private final NamespacedKey compassKey;
+    private final NamespacedKey probeConditionKey;
+    private final NamespacedKey armorSetKey;
+    private final NamespacedKey oreExchangeKey;
+
+    private final Map<UUID, Integer> choiceTokens = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> probeCredits = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> shieldCredits = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> misleadCredits = new ConcurrentHashMap<>();
+
+    private final Map<UUID, Long> shieldActiveUntilMillis = new ConcurrentHashMap<>();
+    private final Map<UUID, Long> shieldCooldownUntilMillis = new ConcurrentHashMap<>();
+
+    private GameManager gameManager;
+    private ConditionManager conditionManager;
+    private int pendingFakeBroadcastCount;
+
+    public PowerupManager(HiddenEliminationPlugin plugin, PlayerDataManager playerDataManager, UIManager uiManager) {
+        this.plugin = plugin;
+        this.playerDataManager = playerDataManager;
+        this.uiManager = uiManager;
+        this.compassKey = new NamespacedKey(plugin, "powerup_compass");
+        this.probeConditionKey = new NamespacedKey(plugin, "probe_condition");
+        this.armorSetKey = new NamespacedKey(plugin, "armor_set");
+        this.oreExchangeKey = new NamespacedKey(plugin, "ore_exchange");
+    }
+
+    public void bindGameManager(GameManager gameManager) {
+        this.gameManager = gameManager;
+    }
+
+    public void bindConditionManager(ConditionManager conditionManager) {
+        this.conditionManager = conditionManager;
+    }
+
+    public void startRound() {
+        choiceTokens.clear();
+        probeCredits.clear();
+        shieldCredits.clear();
+        misleadCredits.clear();
+        shieldActiveUntilMillis.clear();
+        shieldCooldownUntilMillis.clear();
+        pendingFakeBroadcastCount = 0;
+
+        if (gameManager == null) {
+            return;
+        }
+
+        for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
+            choiceTokens.put(playerId, 0);
+            probeCredits.put(playerId, 0);
+            shieldCredits.put(playerId, 0);
+            misleadCredits.put(playerId, 0);
+
+            Player online = plugin.getServer().getPlayer(playerId);
+            if (online != null && online.isOnline()) {
+                giveMenuCompass(online);
+            }
+        }
+    }
+
+    public void stopRound() {
+        choiceTokens.clear();
+        probeCredits.clear();
+        shieldCredits.clear();
+        misleadCredits.clear();
+        shieldActiveUntilMillis.clear();
+        shieldCooldownUntilMillis.clear();
+        pendingFakeBroadcastCount = 0;
+    }
+
+    public void rewardFirstFinisher(Player player) {
+        UUID playerId = player.getUniqueId();
+        String mode = plugin.getConfig().getString("powerups.first-finisher-reward-mode", "choice");
+
+        if ("random".equalsIgnoreCase(mode)) {
+            int pick = random.nextInt(3);
+            if (pick == 0) {
+                probeCredits.merge(playerId, 1, Integer::sum);
+                uiManager.success(player, "你是本轮任务第一个完成者，随机获得：规则试探 x1");
+            } else if (pick == 1) {
+                shieldCredits.merge(playerId, 1, Integer::sum);
+                uiManager.success(player, "你是本轮任务第一个完成者，随机获得：规则屏蔽 x1");
+            } else {
+                misleadCredits.merge(playerId, 1, Integer::sum);
+                uiManager.success(player, "你是本轮任务第一个完成者，随机获得：误导广播 x1");
+            }
+        } else {
+            choiceTokens.merge(playerId, 1, Integer::sum);
+            uiManager.success(player, "你是本轮任务第一个完成者，获得 1 次道具兑换权（右键指南针打开菜单）");
+        }
+
+        giveMenuCompass(player);
+    }
+
+    public boolean handleCompassUse(Player player, ItemStack usedItem) {
+        if (!isMenuCompass(usedItem)) {
+            return false;
+        }
+
+        openExchangeMenu(player);
+        return true;
+    }
+
+    public boolean handleMenuClick(InventoryClickEvent event) {
+        if (event.getView() == null) {
+            return false;
+        }
+
+        String title = event.getView().getTitle();
+        if (MENU_TITLE.equals(title)) {
+            return handleMainMenuClick(event);
+        }
+        if (RULE_TOOL_MENU_TITLE.equals(title)) {
+            return handleRuleToolMenuClick(event);
+        }
+        if (PROBE_MENU_TITLE.equals(title)) {
+            return handleProbeMenuClick(event);
+        }
+        if (ARMOR_MENU_TITLE.equals(title)) {
+            return handleArmorMenuClick(event);
+        }
+        if (ORE_MENU_TITLE.equals(title)) {
+            return handleOreMenuClick(event);
+        }
+
+        return false;
+    }
+
+    public boolean handleMenuDrag(InventoryDragEvent event) {
+        if (event.getView() == null) {
+            return false;
+        }
+
+        String title = event.getView().getTitle();
+        if (!MENU_TITLE.equals(title)
+                && !RULE_TOOL_MENU_TITLE.equals(title)
+                && !PROBE_MENU_TITLE.equals(title)
+                && !ARMOR_MENU_TITLE.equals(title)
+                && !ORE_MENU_TITLE.equals(title)) {
+            return false;
+        }
+
+        event.setCancelled(true);
+        return true;
+    }
+
+    public boolean isMenuCompass(ItemStack item) {
+        if (item == null || item.getType() != Material.COMPASS) {
+            return false;
+        }
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return false;
+        }
+
+        Byte marker = meta.getPersistentDataContainer().get(compassKey, PersistentDataType.BYTE);
+        return marker != null && marker == (byte) 1;
+    }
+
+    public boolean consumeShieldIfActive(Player player) {
+        long now = System.currentTimeMillis();
+        long activeUntil = shieldActiveUntilMillis.getOrDefault(player.getUniqueId(), 0L);
+        return activeUntil > now;
+    }
+
+    public void onRuleRevealed(ConditionType realCondition) {
+        if (pendingFakeBroadcastCount <= 0) {
+            return;
+        }
+
+        pendingFakeBroadcastCount--;
+        ConditionType fake = randomConditionExcluding(realCondition);
+        uiManager.broadcast("规则公开：" + fake.getDisplayName());
+    }
+
+    private boolean handleMainMenuClick(InventoryClickEvent event) {
+        event.setCancelled(true);
+
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return true;
+        }
+
+        if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
+            return true;
+        }
+
+        int slot = event.getRawSlot();
+        switch (slot) {
+            case SLOT_RULE_TOOL -> openRuleToolMenu(player);
+            case SLOT_ARMOR_SET -> openArmorSetMenu(player);
+            case SLOT_ORE_EXCHANGE -> openOreExchangeMenu(player);
+            default -> {
+                return true;
+            }
+        }
+        return true;
+    }
+
+    private boolean handleRuleToolMenuClick(InventoryClickEvent event) {
+        event.setCancelled(true);
+
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return true;
+        }
+
+        if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
+            return true;
+        }
+
+        int slot = event.getRawSlot();
+        if (slot == SLOT_BACK) {
+            openExchangeMenu(player);
+            return true;
+        }
+
+        switch (slot) {
+            case SLOT_RULE_TOOL -> openRuleProbeMenu(player);
+            case SLOT_RULE_SHIELD -> {
+                tryUseRuleShield(player);
+                openRuleToolMenu(player);
+            }
+            case SLOT_FAKE_BROADCAST -> {
+                tryUseMisleadBroadcast(player);
+                openRuleToolMenu(player);
+            }
+            default -> {
+                return true;
+            }
+        }
+
+        return true;
+    }
+
+    private boolean handleProbeMenuClick(InventoryClickEvent event) {
+        event.setCancelled(true);
+
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return true;
+        }
+
+        if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
+            return true;
+        }
+
+        int slot = event.getRawSlot();
+        if (slot == SLOT_BACK) {
+            openRuleToolMenu(player);
+            return true;
+        }
+
+        ItemStack clicked = event.getCurrentItem();
+        ConditionType selected = extractProbeCondition(clicked);
+        if (selected == null) {
+            return true;
+        }
+
+        tryUseRuleProbe(player, selected);
+        openRuleProbeMenu(player);
+        return true;
+    }
+
+    private boolean handleArmorMenuClick(InventoryClickEvent event) {
+        event.setCancelled(true);
+
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return true;
+        }
+
+        if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
+            return true;
+        }
+
+        int slot = event.getRawSlot();
+        if (slot == SLOT_BACK) {
+            openExchangeMenu(player);
+            return true;
+        }
+
+        ItemStack clicked = event.getCurrentItem();
+        ArmorSet armorSet = extractArmorSet(clicked);
+        if (armorSet == null) {
+            return true;
+        }
+
+        tryBuyArmorSet(player, armorSet);
+        openArmorSetMenu(player);
+        return true;
+    }
+
+    private boolean handleOreMenuClick(InventoryClickEvent event) {
+        event.setCancelled(true);
+
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return true;
+        }
+
+        if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
+            return true;
+        }
+
+        int slot = event.getRawSlot();
+        if (slot == SLOT_BACK) {
+            openExchangeMenu(player);
+            return true;
+        }
+
+        ItemStack clicked = event.getCurrentItem();
+        OreExchange oreExchange = extractOreExchange(clicked);
+        if (oreExchange == null) {
+            return true;
+        }
+
+        if (oreExchange == OreExchange.ALL) {
+            tryExchangeAllOres(player);
+        } else {
+            tryExchangeOre(player, oreExchange);
+        }
+
+        openOreExchangeMenu(player);
+        return true;
+    }
+
+    private void openExchangeMenu(Player player) {
+        Inventory menu = Bukkit.createInventory(player, MENU_SIZE, MENU_TITLE);
+        int taskPoints = getPlayerTaskPoints(player.getUniqueId());
+
+        menu.setItem(SLOT_RULE_TOOL, createMenuItem(
+                Material.PAPER,
+                ChatColor.YELLOW + "规则道具",
+                List.of(
+                        ChatColor.GRAY + "进入二级页面使用规则类道具",
+                        ChatColor.GRAY + "包含：规则试探/规则屏蔽/误导广播",
+                        ChatColor.DARK_GRAY + "点击进入"
+                )
+        ));
+
+        menu.setItem(SLOT_ARMOR_SET, createMenuItem(
+                Material.IRON_CHESTPLATE,
+                ChatColor.GREEN + "积分兑换套装",
+                List.of(
+                        ChatColor.GRAY + "使用任务积分兑换不同等级套装",
+                        ChatColor.GRAY + "当前积分：" + ChatColor.LIGHT_PURPLE + taskPoints,
+                        ChatColor.DARK_GRAY + "点击进入套装兑换"
+                )
+        ));
+
+        menu.setItem(SLOT_ORE_EXCHANGE, createMenuItem(
+                Material.EMERALD,
+                ChatColor.AQUA + "矿物兑换积分",
+                List.of(
+                        ChatColor.GRAY + "将背包矿物兑换为任务积分",
+                        ChatColor.GRAY + "当前积分：" + ChatColor.LIGHT_PURPLE + taskPoints,
+                        ChatColor.DARK_GRAY + "点击进入矿物兑换"
+                )
+        ));
+
+        menu.setItem(SLOT_INFO, createMenuItem(
+                Material.COMPASS,
+                ChatColor.GOLD + "兑换信息",
+                List.of(
+                        ChatColor.GRAY + "通用兑换券：" + ChatColor.GREEN + choiceTokens.getOrDefault(player.getUniqueId(), 0),
+                        ChatColor.GRAY + "任务积分：" + ChatColor.LIGHT_PURPLE + taskPoints,
+                        ChatColor.GRAY + "奖励模式：" + ChatColor.AQUA + plugin.getConfig().getString("powerups.first-finisher-reward-mode", "choice"),
+                        ChatColor.DARK_GRAY + "每轮任务第一个完成者可获得道具权限"
+                )
+        ));
+
+        player.openInventory(menu);
+    }
+
+    private void openRuleToolMenu(Player player) {
+        Inventory menu = Bukkit.createInventory(player, MENU_SIZE, RULE_TOOL_MENU_TITLE);
+        long cooldownRemain = getShieldCooldownRemainSeconds(player.getUniqueId());
+
+        menu.setItem(SLOT_RULE_TOOL, createMenuItem(
+                Material.PAPER,
+                ChatColor.YELLOW + "规则试探",
+                List.of(
+                        ChatColor.GRAY + "从已公开规则中选择一条进行检验（是/否）",
+                        ChatColor.GRAY + "当前可用：" + ChatColor.GREEN + getProbeCredits(player.getUniqueId()),
+                        ChatColor.DARK_GRAY + "点击后进入规则选择"
+                )
+        ));
+
+        menu.setItem(SLOT_RULE_SHIELD, createMenuItem(
+                Material.SHIELD,
+                ChatColor.AQUA + "规则屏蔽",
+                List.of(
+                        ChatColor.GRAY + "在持续时间内触发自己规则不会淘汰",
+                        ChatColor.GRAY + "当前可用：" + ChatColor.GREEN + getShieldCredits(player.getUniqueId()),
+                        ChatColor.GRAY + "冷却剩余：" + ChatColor.YELLOW + cooldownRemain + " 秒",
+                        ChatColor.DARK_GRAY + "点击立即使用"
+                )
+        ));
+
+        menu.setItem(SLOT_FAKE_BROADCAST, createMenuItem(
+                Material.NOTE_BLOCK,
+                ChatColor.LIGHT_PURPLE + "误导广播",
+                List.of(
+                        ChatColor.GRAY + "下一次规则公开时额外插入一条假线索",
+                        ChatColor.GRAY + "当前可用：" + ChatColor.GREEN + getMisleadCredits(player.getUniqueId()),
+                        ChatColor.DARK_GRAY + "点击立即使用"
+                )
+        ));
+
+        menu.setItem(SLOT_BACK, createMenuItem(
+                Material.ARROW,
+                ChatColor.YELLOW + "返回兑换菜单",
+                List.of(
+                        ChatColor.GRAY + "通用兑换券：" + ChatColor.GREEN + choiceTokens.getOrDefault(player.getUniqueId(), 0)
+                )
+        ));
+
+        player.openInventory(menu);
+    }
+
+    private void openRuleProbeMenu(Player player) {
+        Inventory menu = Bukkit.createInventory(player, MENU_SIZE, PROBE_MENU_TITLE);
+
+        List<ConditionType> revealed = getRevealedConditionOptions();
+        if (revealed.isEmpty()) {
+            menu.setItem(13, createMenuItem(
+                    Material.BARRIER,
+                    ChatColor.RED + "暂无可检验规则",
+                    List.of(
+                            ChatColor.GRAY + "目前还没有公开规则",
+                            ChatColor.DARK_GRAY + "请等待规则公开后再使用"
+                    )
+            ));
+        } else {
+            int limit = Math.min(revealed.size(), PROBE_SELECT_SLOTS.length);
+            for (int i = 0; i < limit; i++) {
+                ConditionType condition = revealed.get(i);
+                menu.setItem(PROBE_SELECT_SLOTS[i], createProbeConditionItem(condition));
+            }
+        }
+
+        menu.setItem(SLOT_BACK, createMenuItem(
+                Material.ARROW,
+                ChatColor.YELLOW + "返回规则道具",
+                List.of(
+                        ChatColor.GRAY + "可用次数：" + ChatColor.GREEN + getProbeCredits(player.getUniqueId())
+                )
+        ));
+
+        player.openInventory(menu);
+    }
+
+    private void openArmorSetMenu(Player player) {
+        Inventory menu = Bukkit.createInventory(player, MENU_SIZE, ARMOR_MENU_TITLE);
+        int points = getPlayerTaskPoints(player.getUniqueId());
+
+        ArmorSet[] sets = ArmorSet.values();
+        int limit = Math.min(sets.length, ARMOR_SELECT_SLOTS.length);
+        for (int i = 0; i < limit; i++) {
+            ArmorSet set = sets[i];
+            menu.setItem(ARMOR_SELECT_SLOTS[i], createArmorSetItem(set, points));
+        }
+
+        menu.setItem(4, createMenuItem(
+                Material.EXPERIENCE_BOTTLE,
+                ChatColor.LIGHT_PURPLE + "当前积分：" + points,
+                List.of(
+                        ChatColor.GRAY + "点击套装直接兑换",
+                        ChatColor.DARK_GRAY + "兑换后会立即扣分并发放4件套"
+                )
+        ));
+
+        menu.setItem(SLOT_BACK, createMenuItem(
+                Material.ARROW,
+                ChatColor.YELLOW + "返回兑换菜单",
+                List.of(
+                        ChatColor.GRAY + "你的积分：" + ChatColor.LIGHT_PURPLE + points
+                )
+        ));
+
+        player.openInventory(menu);
+    }
+
+    private void openOreExchangeMenu(Player player) {
+        Inventory menu = Bukkit.createInventory(player, MENU_SIZE, ORE_MENU_TITLE);
+        int points = getPlayerTaskPoints(player.getUniqueId());
+
+        int index = 0;
+        for (OreExchange ore : OreExchange.values()) {
+            if (ore == OreExchange.ALL) {
+                continue;
+            }
+            if (index >= ORE_SELECT_SLOTS.length) {
+                break;
+            }
+            menu.setItem(ORE_SELECT_SLOTS[index], createOreExchangeItem(player, ore));
+            index++;
+        }
+
+        menu.setItem(4, createMenuItem(
+                Material.EXPERIENCE_BOTTLE,
+                ChatColor.LIGHT_PURPLE + "一键全部兑换",
+                List.of(
+                        ChatColor.GRAY + "可将背包所有可兑换矿物换成积分",
+                        ChatColor.GRAY + "当前积分：" + ChatColor.LIGHT_PURPLE + points,
+                        ChatColor.DARK_GRAY + "点击执行"
+                )
+        ));
+        ItemStack allItem = menu.getItem(4);
+        if (allItem != null && allItem.getItemMeta() != null) {
+            ItemMeta allMeta = allItem.getItemMeta();
+            allMeta.getPersistentDataContainer().set(oreExchangeKey, PersistentDataType.STRING, OreExchange.ALL.name());
+            allItem.setItemMeta(allMeta);
+            menu.setItem(4, allItem);
+        }
+
+        menu.setItem(SLOT_BACK, createMenuItem(
+                Material.ARROW,
+                ChatColor.YELLOW + "返回兑换菜单",
+                List.of(
+                        ChatColor.GRAY + "你的积分：" + ChatColor.LIGHT_PURPLE + points
+                )
+        ));
+
+        player.openInventory(menu);
+    }
+
+    private ItemStack createProbeConditionItem(ConditionType condition) {
+        ItemStack item = new ItemStack(Material.PAPER);
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return item;
+        }
+
+        meta.setDisplayName(ChatColor.YELLOW + condition.getDisplayName());
+        meta.setLore(List.of(
+                ChatColor.GRAY + "点击检验该规则是否属于你",
+                ChatColor.DARK_GRAY + "将消耗 1 次规则试探"
+        ));
+        meta.getPersistentDataContainer().set(probeConditionKey, PersistentDataType.STRING, condition.name());
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private ItemStack createArmorSetItem(ArmorSet armorSet, int currentPoints) {
+        int price = armorSet.price(plugin);
+        boolean affordable = currentPoints >= price;
+
+        ItemStack item = new ItemStack(armorSet.iconMaterial);
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return item;
+        }
+
+        meta.setDisplayName(ChatColor.GREEN + armorSet.displayName);
+        meta.setLore(List.of(
+                ChatColor.GRAY + "价格：" + ChatColor.LIGHT_PURPLE + price + " 积分",
+                ChatColor.GRAY + "包含：头盔、胸甲、护腿、靴子",
+                affordable ? ChatColor.GREEN + "可兑换" : ChatColor.RED + "积分不足",
+                ChatColor.DARK_GRAY + "点击立即兑换"
+        ));
+        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+        meta.getPersistentDataContainer().set(armorSetKey, PersistentDataType.STRING, armorSet.name());
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private ItemStack createOreExchangeItem(Player player, OreExchange oreExchange) {
+        int unitPoints = oreExchange.points(plugin);
+        int count = countMaterial(player.getInventory(), oreExchange.material);
+        int totalPoints = count * unitPoints;
+
+        ItemStack item = new ItemStack(oreExchange.iconMaterial);
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return item;
+        }
+
+        meta.setDisplayName(ChatColor.AQUA + oreExchange.displayName);
+        meta.setLore(List.of(
+                ChatColor.GRAY + "单价：" + ChatColor.LIGHT_PURPLE + unitPoints + " 积分/个",
+                ChatColor.GRAY + "持有：" + ChatColor.GREEN + count,
+                ChatColor.GRAY + "可兑换：" + ChatColor.LIGHT_PURPLE + totalPoints + " 积分",
+                ChatColor.DARK_GRAY + "点击兑换该矿物（全部数量）"
+        ));
+        meta.getPersistentDataContainer().set(oreExchangeKey, PersistentDataType.STRING, oreExchange.name());
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private ConditionType extractProbeCondition(ItemStack item) {
+        if (item == null) {
+            return null;
+        }
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return null;
+        }
+
+        String key = meta.getPersistentDataContainer().get(probeConditionKey, PersistentDataType.STRING);
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+
+        try {
+            return ConditionType.valueOf(key);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private ArmorSet extractArmorSet(ItemStack item) {
+        if (item == null) {
+            return null;
+        }
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return null;
+        }
+
+        String key = meta.getPersistentDataContainer().get(armorSetKey, PersistentDataType.STRING);
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+
+        try {
+            return ArmorSet.valueOf(key);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private OreExchange extractOreExchange(ItemStack item) {
+        if (item == null) {
+            return null;
+        }
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return null;
+        }
+
+        String key = meta.getPersistentDataContainer().get(oreExchangeKey, PersistentDataType.STRING);
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+
+        try {
+            return OreExchange.valueOf(key);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    private List<ConditionType> getRevealedConditionOptions() {
+        if (conditionManager == null) {
+            return List.of();
+        }
+
+        Set<ConditionType> deduplicated = new LinkedHashSet<>();
+        for (ConditionManager.RevealedCondition revealed : conditionManager.getRevealedConditionsSnapshot()) {
+            deduplicated.add(revealed.conditionType());
+        }
+        return new ArrayList<>(deduplicated);
+    }
+
+    private void tryUseRuleProbe(Player player, ConditionType asked) {
+        if (!consumeCreditFor(player.getUniqueId(), PowerType.RULE_PROBE)) {
+            uiManager.warn(player, "可用次数不足，任务第一名可以获得道具兑换权");
+            return;
+        }
+
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        boolean yes = data != null && asked == data.getAssignedCondition();
+
+        uiManager.info(player, "规则试探：'" + asked.getDisplayName() + "' 是否属于你？");
+        uiManager.info(player, yes ? ChatColor.GREEN + "结果：是" : ChatColor.RED + "结果：否");
+    }
+
+    private void tryUseRuleShield(Player player) {
+        long cooldownRemain = getShieldCooldownRemainSeconds(player.getUniqueId());
+        if (cooldownRemain > 0) {
+            uiManager.warn(player, "规则屏蔽仍在冷却中，剩余 " + cooldownRemain + " 秒");
+            return;
+        }
+
+        if (!consumeCreditFor(player.getUniqueId(), PowerType.RULE_SHIELD)) {
+            uiManager.warn(player, "可用次数不足，任务第一名可以获得道具兑换权");
+            return;
+        }
+
+        int duration = Math.max(1, plugin.getConfig().getInt("powerups.rule-shield.duration-seconds", 12));
+        int cooldown = Math.max(duration, plugin.getConfig().getInt("powerups.rule-shield.cooldown-seconds", 120));
+
+        long now = System.currentTimeMillis();
+        shieldActiveUntilMillis.put(player.getUniqueId(), now + duration * 1000L);
+        shieldCooldownUntilMillis.put(player.getUniqueId(), now + cooldown * 1000L);
+
+        uiManager.success(player, "规则屏蔽已激活，持续 " + duration + " 秒，冷却 " + cooldown + " 秒");
+    }
+
+    private void tryUseMisleadBroadcast(Player player) {
+        if (!consumeCreditFor(player.getUniqueId(), PowerType.FAKE_BROADCAST)) {
+            uiManager.warn(player, "可用次数不足，任务第一名可以获得道具兑换权");
+            return;
+        }
+
+        pendingFakeBroadcastCount++;
+        uiManager.success(player, "误导广播已准备，将在下一次规则公开时生效");
+    }
+
+    private void tryExchangeOre(Player player, OreExchange oreExchange) {
+        if (oreExchange == OreExchange.ALL) {
+            tryExchangeAllOres(player);
+            return;
+        }
+
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        if (data == null) {
+            uiManager.warn(player, "未找到玩家积分数据");
+            return;
+        }
+
+        PlayerInventory inventory = player.getInventory();
+        int amount = countMaterial(inventory, oreExchange.material);
+        if (amount <= 0) {
+            uiManager.warn(player, "你没有可兑换的" + oreExchange.displayName);
+            return;
+        }
+
+        int removed = removeMaterial(inventory, oreExchange.material, amount);
+        if (removed <= 0) {
+            uiManager.warn(player, "兑换失败，请重试");
+            return;
+        }
+
+        int gained = removed * oreExchange.points(plugin);
+        data.addTaskPoints(gained);
+        uiManager.success(player, "兑换成功：" + oreExchange.displayName + " x" + removed + "，+" + gained + " 积分");
+    }
+
+    private void tryExchangeAllOres(Player player) {
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        if (data == null) {
+            uiManager.warn(player, "未找到玩家积分数据");
+            return;
+        }
+
+        PlayerInventory inventory = player.getInventory();
+        int totalGained = 0;
+        int totalRemoved = 0;
+
+        for (OreExchange oreExchange : OreExchange.values()) {
+            if (oreExchange == OreExchange.ALL) {
+                continue;
+            }
+
+            int amount = countMaterial(inventory, oreExchange.material);
+            if (amount <= 0) {
+                continue;
+            }
+
+            int removed = removeMaterial(inventory, oreExchange.material, amount);
+            if (removed <= 0) {
+                continue;
+            }
+
+            totalRemoved += removed;
+            totalGained += removed * oreExchange.points(plugin);
+        }
+
+        if (totalRemoved <= 0 || totalGained <= 0) {
+            uiManager.warn(player, "背包中没有可兑换矿物");
+            return;
+        }
+
+        data.addTaskPoints(totalGained);
+        uiManager.success(player, "已一键兑换矿物 x" + totalRemoved + "，+" + totalGained + " 积分");
+    }
+
+    private int countMaterial(PlayerInventory inventory, Material material) {
+        int total = 0;
+        for (ItemStack content : inventory.getContents()) {
+            if (content == null || content.getType() != material) {
+                continue;
+            }
+            total += content.getAmount();
+        }
+        return total;
+    }
+
+    private int removeMaterial(PlayerInventory inventory, Material material, int amount) {
+        int left = amount;
+        ItemStack[] contents = inventory.getContents();
+
+        for (int i = 0; i < contents.length && left > 0; i++) {
+            ItemStack content = contents[i];
+            if (content == null || content.getType() != material) {
+                continue;
+            }
+
+            int stackAmount = content.getAmount();
+            if (stackAmount <= left) {
+                left -= stackAmount;
+                contents[i] = null;
+            } else {
+                content.setAmount(stackAmount - left);
+                contents[i] = content;
+                left = 0;
+            }
+        }
+
+        inventory.setContents(contents);
+        return amount - left;
+    }
+
+    private void tryBuyArmorSet(Player player, ArmorSet armorSet) {
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        if (data == null) {
+            uiManager.warn(player, "未找到玩家积分数据");
+            return;
+        }
+        if (data.isEliminated()) {
+            uiManager.warn(player, "已淘汰状态无法兑换套装");
+            return;
+        }
+
+        int price = armorSet.price(plugin);
+        int points = data.getTaskPoints();
+        if (points < price) {
+            uiManager.warn(player, "积分不足，需要 " + price + " 积分");
+            return;
+        }
+
+        data.deductTaskPoints(price);
+        giveArmorSet(player, armorSet);
+        uiManager.success(player, "兑换成功：" + armorSet.displayName + "，消耗 " + price + " 积分，剩余 " + data.getTaskPoints() + " 积分");
+    }
+
+    private void giveArmorSet(Player player, ArmorSet armorSet) {
+        PlayerInventory inventory = player.getInventory();
+
+        giveArmorPiece(player, inventory.getHelmet(), armorSet.helmet, ArmorSlot.HELMET);
+        giveArmorPiece(player, inventory.getChestplate(), armorSet.chestplate, ArmorSlot.CHESTPLATE);
+        giveArmorPiece(player, inventory.getLeggings(), armorSet.leggings, ArmorSlot.LEGGINGS);
+        giveArmorPiece(player, inventory.getBoots(), armorSet.boots, ArmorSlot.BOOTS);
+    }
+
+    private void giveArmorPiece(Player player, ItemStack equipped, Material material, ArmorSlot armorSlot) {
+        ItemStack piece = new ItemStack(material);
+        PlayerInventory inventory = player.getInventory();
+
+        if (equipped == null || equipped.getType() == Material.AIR) {
+            switch (armorSlot) {
+                case HELMET -> inventory.setHelmet(piece);
+                case CHESTPLATE -> inventory.setChestplate(piece);
+                case LEGGINGS -> inventory.setLeggings(piece);
+                case BOOTS -> inventory.setBoots(piece);
+            }
+            return;
+        }
+
+        Map<Integer, ItemStack> remaining = inventory.addItem(piece);
+        if (!remaining.isEmpty()) {
+            for (ItemStack leftover : remaining.values()) {
+                player.getWorld().dropItemNaturally(player.getLocation(), leftover);
+            }
+        }
+    }
+
+    private boolean consumeCreditFor(UUID playerId, PowerType type) {
+        Map<UUID, Integer> typedMap = switch (type) {
+            case RULE_PROBE -> probeCredits;
+            case RULE_SHIELD -> shieldCredits;
+            case FAKE_BROADCAST -> misleadCredits;
+        };
+
+        int owned = typedMap.getOrDefault(playerId, 0);
+        if (owned > 0) {
+            typedMap.put(playerId, owned - 1);
+            return true;
+        }
+
+        int generic = choiceTokens.getOrDefault(playerId, 0);
+        if (generic > 0) {
+            choiceTokens.put(playerId, generic - 1);
+            return true;
+        }
+
+        return false;
+    }
+
+    private int getProbeCredits(UUID playerId) {
+        return probeCredits.getOrDefault(playerId, 0) + choiceTokens.getOrDefault(playerId, 0);
+    }
+
+    private int getShieldCredits(UUID playerId) {
+        return shieldCredits.getOrDefault(playerId, 0) + choiceTokens.getOrDefault(playerId, 0);
+    }
+
+    private int getMisleadCredits(UUID playerId) {
+        return misleadCredits.getOrDefault(playerId, 0) + choiceTokens.getOrDefault(playerId, 0);
+    }
+
+    private int getPlayerTaskPoints(UUID playerId) {
+        PlayerGameData data = playerDataManager.get(playerId);
+        return data == null ? 0 : data.getTaskPoints();
+    }
+
+    private long getShieldCooldownRemainSeconds(UUID playerId) {
+        long remain = shieldCooldownUntilMillis.getOrDefault(playerId, 0L) - System.currentTimeMillis();
+        if (remain <= 0L) {
+            return 0L;
+        }
+        return (remain + 999L) / 1000L;
+    }
+
+    private ConditionType randomConditionExcluding(ConditionType excluded) {
+        List<ConditionType> pool = new ArrayList<>(List.of(ConditionType.values()));
+        pool.remove(excluded);
+        if (pool.isEmpty()) {
+            return excluded;
+        }
+        return pool.get(random.nextInt(pool.size()));
+    }
+
+    private void giveMenuCompass(Player player) {
+        ItemStack compass = new ItemStack(Material.COMPASS);
+        ItemMeta meta = compass.getItemMeta();
+        if (meta == null) {
+            return;
+        }
+
+        meta.setDisplayName(ChatColor.GOLD + "道具指南针");
+        meta.setLore(List.of(
+                ChatColor.GRAY + "右键打开道具兑换菜单",
+                ChatColor.GRAY + "该指南针无追踪敌人功能"
+        ));
+        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+        meta.getPersistentDataContainer().set(compassKey, PersistentDataType.BYTE, (byte) 1);
+
+        if (meta instanceof CompassMeta compassMeta) {
+            compassMeta.setLodestoneTracked(false);
+        }
+
+        compass.setItemMeta(meta);
+
+        int slot = Math.max(0, Math.min(8, plugin.getConfig().getInt("powerups.menu-compass-slot", 8)));
+        player.getInventory().setItem(slot, compass);
+    }
+
+    private ItemStack createMenuItem(Material material, String name, List<String> lore) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return item;
+        }
+
+        meta.setDisplayName(name);
+        meta.setLore(lore);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private enum PowerType {
+        RULE_PROBE,
+        RULE_SHIELD,
+        FAKE_BROADCAST
+    }
+
+    private enum OreExchange {
+        ALL("全部矿物", "all", 0, Material.EXPERIENCE_BOTTLE, Material.EXPERIENCE_BOTTLE),
+        COAL("煤炭", "coal", 1, Material.COAL, Material.COAL),
+        REDSTONE("红石", "redstone", 1, Material.REDSTONE, Material.REDSTONE),
+        LAPIS("青金石", "lapis_lazuli", 2, Material.LAPIS_LAZULI, Material.LAPIS_LAZULI),
+        QUARTZ("下界石英", "quartz", 2, Material.QUARTZ, Material.QUARTZ),
+        RAW_COPPER("粗铜", "raw_copper", 2, Material.RAW_COPPER, Material.RAW_COPPER),
+        RAW_IRON("粗铁", "raw_iron", 3, Material.RAW_IRON, Material.RAW_IRON),
+        RAW_GOLD("粗金", "raw_gold", 4, Material.RAW_GOLD, Material.RAW_GOLD),
+        DIAMOND("钻石", "diamond", 8, Material.DIAMOND, Material.DIAMOND),
+        EMERALD("绿宝石", "emerald", 10, Material.EMERALD, Material.EMERALD),
+        ANCIENT_DEBRIS("远古残骸", "ancient_debris", 18, Material.ANCIENT_DEBRIS, Material.ANCIENT_DEBRIS);
+
+        private final String displayName;
+        private final String configKey;
+        private final int defaultPoints;
+        private final Material iconMaterial;
+        private final Material material;
+
+        OreExchange(String displayName, String configKey, int defaultPoints, Material iconMaterial, Material material) {
+            this.displayName = displayName;
+            this.configKey = configKey;
+            this.defaultPoints = defaultPoints;
+            this.iconMaterial = iconMaterial;
+            this.material = material;
+        }
+
+        private int points(HiddenEliminationPlugin plugin) {
+            return Math.max(0, plugin.getConfig().getInt("powerups.ore-exchange-points." + configKey, defaultPoints));
+        }
+    }
+
+    private enum ArmorSlot {
+        HELMET,
+        CHESTPLATE,
+        LEGGINGS,
+        BOOTS
+    }
+
+    private enum ArmorSet {
+        LEATHER(
+                "皮革套装",
+                "leather",
+                8,
+                Material.LEATHER_CHESTPLATE,
+                Material.LEATHER_HELMET,
+                Material.LEATHER_CHESTPLATE,
+                Material.LEATHER_LEGGINGS,
+                Material.LEATHER_BOOTS
+        ),
+        CHAINMAIL(
+                "锁链套装",
+                "chainmail",
+                12,
+                Material.CHAINMAIL_CHESTPLATE,
+                Material.CHAINMAIL_HELMET,
+                Material.CHAINMAIL_CHESTPLATE,
+                Material.CHAINMAIL_LEGGINGS,
+                Material.CHAINMAIL_BOOTS
+        ),
+        GOLDEN(
+                "金质套装",
+                "golden",
+                16,
+                Material.GOLDEN_CHESTPLATE,
+                Material.GOLDEN_HELMET,
+                Material.GOLDEN_CHESTPLATE,
+                Material.GOLDEN_LEGGINGS,
+                Material.GOLDEN_BOOTS
+        ),
+        IRON(
+                "铁质套装",
+                "iron",
+                22,
+                Material.IRON_CHESTPLATE,
+                Material.IRON_HELMET,
+                Material.IRON_CHESTPLATE,
+                Material.IRON_LEGGINGS,
+                Material.IRON_BOOTS
+        ),
+        DIAMOND(
+                "钻石套装",
+                "diamond",
+                30,
+                Material.DIAMOND_CHESTPLATE,
+                Material.DIAMOND_HELMET,
+                Material.DIAMOND_CHESTPLATE,
+                Material.DIAMOND_LEGGINGS,
+                Material.DIAMOND_BOOTS
+        ),
+        NETHERITE(
+                "下界合金套装",
+                "netherite",
+                40,
+                Material.NETHERITE_CHESTPLATE,
+                Material.NETHERITE_HELMET,
+                Material.NETHERITE_CHESTPLATE,
+                Material.NETHERITE_LEGGINGS,
+                Material.NETHERITE_BOOTS
+        );
+
+        private final String displayName;
+        private final String configKey;
+        private final int defaultPrice;
+        private final Material iconMaterial;
+        private final Material helmet;
+        private final Material chestplate;
+        private final Material leggings;
+        private final Material boots;
+
+        ArmorSet(
+                String displayName,
+                String configKey,
+                int defaultPrice,
+                Material iconMaterial,
+                Material helmet,
+                Material chestplate,
+                Material leggings,
+                Material boots
+        ) {
+            this.displayName = displayName;
+            this.configKey = configKey;
+            this.defaultPrice = defaultPrice;
+            this.iconMaterial = iconMaterial;
+            this.helmet = helmet;
+            this.chestplate = chestplate;
+            this.leggings = leggings;
+            this.boots = boots;
+        }
+
+        private int price(HiddenEliminationPlugin plugin) {
+            return Math.max(0, plugin.getConfig().getInt("powerups.armor-set-prices." + configKey, defaultPrice));
+        }
+    }
+}

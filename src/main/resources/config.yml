@@ -1,0 +1,99 @@
+# HiddenElimination 配置
+
+lobby:
+  world: lobby
+  x: 0.5
+  y: 99.0
+  z: 0.5
+  yaw: 0.0
+  pitch: 0.0
+
+game:
+  world: he_game
+  min-ready-players: 2
+  spread-radius: 200
+  reveal-interval-seconds: 120
+
+  # 每局开始前是否重置游戏地图（从模板复制）
+  reset-world-each-round: true
+  # 模板世界目录名（服务器根目录下）
+  world-template: he_game_template
+
+  # 每局开局是否重置时间与天气
+  reset-time-each-round: true
+  # 开局设置为白天，1000 ticks
+  start-time-ticks: 1000
+  clear-weather-each-round: true
+  clear-weather-duration-seconds: 1200
+
+world-border:
+  enabled: true
+  start-size: 1200.0
+  end-size: 120.0
+  start-delay-seconds: 120
+  shrink-duration-seconds: 1200
+  announce-interval-seconds: 60
+  reset-after-game: true
+  use-world-spawn: true
+  center-x: 0.0
+  center-z: 0.0
+
+messages:
+  prefix: "[隐藏淘汰] "
+  game-start: "游戏开始，隐藏淘汰条件已分配。"
+  game-end: "本局结束，所有玩家已返回大厅。"
+  winner: "恭喜 {player} 获胜！"
+
+tasks:
+  enabled: true
+  publish-interval-seconds-min: 60
+  publish-interval-seconds-max: 60
+  difficulty-upgrade-interval-seconds: 360
+  lives-per-player: 3
+  failure-point-penalty: 4
+
+  time-limit-seconds:
+    easy: 90
+    medium: 75
+    hard: 60
+
+  points:
+    rank-1: 10
+    rank-2: 7
+    rank-3: 5
+    rank-other: 3
+    difficulty-bonus-per-tier: 2
+
+powerups:
+  # choice: 第一个完成者获得 1 张通用兑换券（可自由选道具）
+  # random: 第一个完成者随机获得 1 个具体道具
+  first-finisher-reward-mode: choice
+  menu-compass-slot: 8
+
+  rule-shield:
+    duration-seconds: 12
+    cooldown-seconds: 120
+
+  armor-set-prices:
+    leather: 8
+    chainmail: 12
+    golden: 16
+    iron: 22
+    diamond: 30
+    netherite: 40
+
+  ore-exchange-points:
+    coal: 1
+    redstone: 1
+    lapis_lazuli: 2
+    quartz: 2
+    raw_copper: 2
+    raw_iron: 3
+    raw_gold: 4
+    diamond: 8
+    emerald: 10
+    ancient_debris: 18
+
+result-scoring:
+  placement-weight: 10
+  task-points-weight: 1
