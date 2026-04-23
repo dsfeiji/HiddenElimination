@@ -150,7 +150,12 @@ public final class PrepareItemListener implements Listener {
         ItemMeta meta = item.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(ChatColor.AQUA + "开始游戏");
-            meta.setLore(Arrays.asList(ChatColor.GRAY + "管理员右键开始"));
+            meta.setLore(Arrays.asList(
+                    ChatColor.GRAY + "管理员右键开始",
+                    ChatColor.DARK_GRAY + "可用 /he setlives 设置初始命数",
+                    ChatColor.DARK_GRAY + "可用 /he setduration 设置总时长",
+                    ChatColor.DARK_GRAY + "可用 /he setreveal 设置揭示间隔"
+            ));
             item.setItemMeta(meta);
         }
         return item;

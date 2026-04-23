@@ -13,6 +13,8 @@ game:
   min-ready-players: 2
   spread-radius: 200
   reveal-interval-seconds: 120
+  # 0 表示不限时
+  round-duration-seconds: 0
 
   # 每局开始前是否重置游戏地图（从模板复制）
   reset-world-each-round: true
@@ -28,10 +30,10 @@ game:
 
 world-border:
   enabled: true
-  start-size: 1200.0
+  start-size: 700.0
   end-size: 120.0
-  start-delay-seconds: 120
-  shrink-duration-seconds: 1200
+  start-delay-seconds: 60
+  shrink-duration-seconds: 720
   announce-interval-seconds: 60
   reset-after-game: true
   use-world-spawn: true
@@ -48,7 +50,9 @@ tasks:
   enabled: true
   publish-interval-seconds-min: 60
   publish-interval-seconds-max: 60
-  difficulty-upgrade-interval-seconds: 360
+  # 标准档：前4轮仅难度1，随后按间隔升级
+  easy-only-task-count: 4
+  difficulty-upgrade-interval-seconds: 480
   lives-per-player: 3
   failure-point-penalty: 4
 

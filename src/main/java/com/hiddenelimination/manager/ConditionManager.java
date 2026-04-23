@@ -3,11 +3,13 @@ package com.hiddenelimination.manager;
 import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
+import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
@@ -15,7 +17,7 @@ import java.util.UUID;
 
 public final class ConditionManager {
 
-    public record RevealedCondition(ConditionType conditionType) {
+    public record RevealedCondition(ConditionType conditionType, boolean fake, long activeAtMillis) {
     }
 
     private final HiddenEliminationPlugin plugin;
@@ -24,6 +26,7 @@ public final class ConditionManager {
     private final Random random = new Random();
 
     private final List<RevealedCondition> revealedConditions = new ArrayList<>();
+    private final Set<ConditionType> triggeredConditions = new HashSet<>();
 
     private GameManager gameManager;
     private TaskManager taskManager;
@@ -31,6 +34,7 @@ public final class ConditionManager {
     private BukkitTask revealTask;
     private long revealIntervalSeconds = 180L;
     private long nextRevealEpochSecond = 0L;
+    private static final long RULE_ENABLE_DELAY_MILLIS = 3000L;
 
     public ConditionManager(HiddenEliminationPlugin plugin, PlayerDataManager playerDataManager, UIManager uiManager) {
         this.plugin = plugin;
@@ -56,6 +60,7 @@ public final class ConditionManager {
 
     public void assignHiddenConditions(List<Player> players) {
         revealedConditions.clear();
+        triggeredConditions.clear();
 
         List<ConditionType> pool = new ArrayList<>(List.of(ConditionType.values()));
         Collections.shuffle(pool, random);
@@ -67,15 +72,16 @@ public final class ConditionManager {
             ConditionType uniqueCondition = pool.get(i);
             data.setAssignedCondition(uniqueCondition);
             data.setConditionRevealed(false);
+            data.setConditionActiveAtMillis(0L);
 
             uiManager.info(player, "你的隐藏淘汰条件已分配。");
         }
     }
 
-    public void startRevealTask() {
+    public void startRevealTask(long intervalSeconds) {
         stopRevealTask();
 
-        this.revealIntervalSeconds = Math.max(10L, plugin.getConfig().getLong("game.reveal-interval-seconds", 180L));
+        this.revealIntervalSeconds = Math.max(10L, intervalSeconds);
         long intervalTicks = revealIntervalSeconds * 20L;
         this.nextRevealEpochSecond = nowSecond() + revealIntervalSeconds;
 
@@ -96,6 +102,14 @@ public final class ConditionManager {
             revealTask = null;
         }
         nextRevealEpochSecond = 0L;
+    }
+
+    public void revealFakeCondition(ConditionType conditionType) {
+        if (gameManager == null || !gameManager.isRunning() || conditionType == null) {
+            return;
+        }
+        revealedConditions.add(new RevealedCondition(conditionType, true, System.currentTimeMillis()));
+        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName());
     }
 
     public void revealRandomCondition() {
@@ -120,11 +134,15 @@ public final class ConditionManager {
 
         PlayerGameData selected = unrevealedAlive.get(random.nextInt(unrevealedAlive.size()));
         selected.setConditionRevealed(true);
+        long activeAt = System.currentTimeMillis() + RULE_ENABLE_DELAY_MILLIS;
+        selected.setConditionActiveAtMillis(activeAt);
 
         ConditionType conditionType = selected.getAssignedCondition();
-        revealedConditions.add(new RevealedCondition(conditionType));
+        revealedConditions.add(new RevealedCondition(conditionType, false, activeAt));
 
-        uiManager.broadcast("规则公开：" + conditionType.getDisplayName());
+        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName() + "（3秒后生效）");
+        uiManager.showRuleRevealTitleToAll(conditionType.getDisplayName(), 3);
+        uiManager.playSoundToAll(Sound.BLOCK_BELL_USE, 0.9F, 1.2F);
         if (powerupManager != null) {
             powerupManager.onRuleRevealed(conditionType);
         }
@@ -158,15 +176,30 @@ public final class ConditionManager {
             return false;
         }
 
+        long now = System.currentTimeMillis();
+        if (data.getConditionActiveAtMillis() > now) {
+            long remain = Math.max(1L, (data.getConditionActiveAtMillis() - now + 999L) / 1000L);
+            uiManager.warn(player, "[规则] 你的公开规则将在 " + remain + " 秒后生效。");
+            return false;
+        }
+
         if (powerupManager != null && powerupManager.consumeShieldIfActive(player)) {
             return false;
         }
 
-        return gameManager.eliminatePlayer(player, "触发已公开淘汰条件：" + actionType.getDisplayName());
+        boolean eliminated = gameManager.eliminatePlayer(player, "触发已公开淘汰条件：" + actionType.getDisplayName());
+        if (eliminated) {
+            triggeredConditions.add(actionType);
+        }
+        return eliminated;
     }
 
     public List<RevealedCondition> getRevealedConditionsSnapshot() {
         return Collections.unmodifiableList(new ArrayList<>(revealedConditions));
+    }
+
+    public Set<ConditionType> getTriggeredConditionsSnapshot() {
+        return Set.copyOf(triggeredConditions);
     }
 
     public long getSecondsUntilNextReveal() {

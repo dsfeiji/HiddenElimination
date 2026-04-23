@@ -23,7 +23,8 @@ import java.util.stream.Collectors;
 public final class HECommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUB_COMMANDS = Arrays.asList(
-            "join", "leave", "ready", "unready", "start", "stop", "status", "setlobby", "help"
+            "join", "leave", "ready", "unready", "start", "stop", "status", "setlobby",
+            "setlives", "setduration", "setreveal", "help"
     );
 
     private final PlayerDataManager playerDataManager;
@@ -65,6 +66,9 @@ public final class HECommand implements CommandExecutor, TabCompleter {
             case "stop" -> handleStop(player);
             case "status" -> uiManager.sendStatus(player, playerDataManager, gameManager.getGameState());
             case "setlobby" -> handleSetLobby(player);
+            case "setlives" -> handleSetLives(player, args);
+            case "setduration" -> handleSetDuration(player, args);
+            case "setreveal" -> handleSetReveal(player, args);
             default -> sendHelp(sender);
         }
 
@@ -151,6 +155,72 @@ public final class HECommand implements CommandExecutor, TabCompleter {
         uiManager.success(player, "大厅坐标已保存");
     }
 
+    private void handleSetLives(Player player, String[] args) {
+        if (!player.hasPermission("hiddenelimination.admin") && !player.isOp()) {
+            uiManager.error(player, "你没有权限设置局内参数");
+            return;
+        }
+        if (args.length < 2) {
+            uiManager.warn(player, "用法：/he setlives <1-20>");
+            return;
+        }
+        try {
+            int lives = Integer.parseInt(args[1]);
+            if (lives < 1 || lives > 20) {
+                uiManager.warn(player, "初始命数范围应为 1-20");
+                return;
+            }
+            gameManager.setLobbyInitialLivesOverride(lives);
+            uiManager.success(player, "本局初始命数已设为 " + lives);
+        } catch (NumberFormatException ex) {
+            uiManager.warn(player, "请输入有效整数。");
+        }
+    }
+
+    private void handleSetDuration(Player player, String[] args) {
+        if (!player.hasPermission("hiddenelimination.admin") && !player.isOp()) {
+            uiManager.error(player, "你没有权限设置局内参数");
+            return;
+        }
+        if (args.length < 2) {
+            uiManager.warn(player, "用法：/he setduration <秒数，0为不限时>");
+            return;
+        }
+        try {
+            long seconds = Long.parseLong(args[1]);
+            if (seconds < 0 || seconds > 7200) {
+                uiManager.warn(player, "总时长范围应为 0-7200 秒");
+                return;
+            }
+            gameManager.setLobbyRoundDurationSecondsOverride(seconds);
+            uiManager.success(player, "本局总时长已设为 " + (seconds == 0 ? "不限时" : seconds + " 秒"));
+        } catch (NumberFormatException ex) {
+            uiManager.warn(player, "请输入有效整数。");
+        }
+    }
+
+    private void handleSetReveal(Player player, String[] args) {
+        if (!player.hasPermission("hiddenelimination.admin") && !player.isOp()) {
+            uiManager.error(player, "你没有权限设置局内参数");
+            return;
+        }
+        if (args.length < 2) {
+            uiManager.warn(player, "用法：/he setreveal <秒数>");
+            return;
+        }
+        try {
+            long seconds = Long.parseLong(args[1]);
+            if (seconds < 10 || seconds > 1200) {
+                uiManager.warn(player, "揭示间隔范围应为 10-1200 秒");
+                return;
+            }
+            gameManager.setLobbyRevealIntervalSecondsOverride(seconds);
+            uiManager.success(player, "本局规则揭示间隔已设为 " + seconds + " 秒");
+        } catch (NumberFormatException ex) {
+            uiManager.warn(player, "请输入有效整数。");
+        }
+    }
+
     private void sendHelp(CommandSender sender) {
         sender.sendMessage("/he join - 加入房间");
         sender.sendMessage("/he leave - 离开房间");
@@ -159,6 +229,9 @@ public final class HECommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("/he start - 开始游戏（管理员）");
         sender.sendMessage("/he stop - 结束游戏（管理员）");
         sender.sendMessage("/he setlobby - 设置大厅（管理员）");
+        sender.sendMessage("/he setlives <n> - 设置本局初始命数（管理员）");
+        sender.sendMessage("/he setduration <sec> - 设置本局总时长，0不限时（管理员）");
+        sender.sendMessage("/he setreveal <sec> - 设置本局规则揭示间隔（管理员）");
         sender.sendMessage("/he status - 查看当前状态");
     }
 }

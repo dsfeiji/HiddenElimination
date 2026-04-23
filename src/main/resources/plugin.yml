@@ -7,7 +7,7 @@ author: HiddenElimination
 commands:
   he:
     description: HiddenElimination 主命令
-    usage: /he <join|leave|ready|unready|start|stop|status|setlobby|help>
+    usage: /he <join|leave|ready|unready|start|stop|status|setlobby|setlives|setduration|setreveal|help>
 
 permissions:
   hiddenelimination.admin:

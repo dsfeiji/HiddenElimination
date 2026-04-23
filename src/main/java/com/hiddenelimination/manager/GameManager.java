@@ -4,8 +4,10 @@ import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.listener.PrepareItemListener;
 import com.hiddenelimination.model.GameState;
 import com.hiddenelimination.model.PlayerGameData;
+import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
+import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
 import org.bukkit.attribute.Attribute;
@@ -42,11 +44,16 @@ public final class GameManager {
 
     private BukkitTask borderStartTask;
     private BukkitTask borderAnnounceTask;
+    private BukkitTask roundEndTask;
     private World borderWorld;
     private double borderResetSize;
     private boolean borderShrinking;
     private long borderShrinkStartMillis;
     private long borderShrinkEndMillis;
+    private final Map<UUID, Long> survivalBonusMillisByPlayer = new HashMap<>();
+    private int lobbyInitialLivesOverride = -1;
+    private long lobbyRoundDurationSecondsOverride = -1L;
+    private long lobbyRevealIntervalSecondsOverride = -1L;
 
     public GameManager(
             HiddenEliminationPlugin plugin,
@@ -82,6 +89,39 @@ public final class GameManager {
 
     public boolean isActivePlayer(UUID playerId) {
         return activePlayers.contains(playerId);
+    }
+
+    public void setLobbyInitialLivesOverride(int lives) {
+        this.lobbyInitialLivesOverride = Math.max(1, lives);
+    }
+
+    public void setLobbyRoundDurationSecondsOverride(long durationSeconds) {
+        this.lobbyRoundDurationSecondsOverride = Math.max(0L, durationSeconds);
+    }
+
+    public void setLobbyRevealIntervalSecondsOverride(long intervalSeconds) {
+        this.lobbyRevealIntervalSecondsOverride = Math.max(10L, intervalSeconds);
+    }
+
+    public int getRoundInitialLives() {
+        if (lobbyInitialLivesOverride > 0) {
+            return lobbyInitialLivesOverride;
+        }
+        return Math.max(1, plugin.getConfig().getInt("tasks.lives-per-player", 3));
+    }
+
+    public long getRoundDurationSeconds() {
+        if (lobbyRoundDurationSecondsOverride >= 0L) {
+            return lobbyRoundDurationSecondsOverride;
+        }
+        return Math.max(0L, plugin.getConfig().getLong("game.round-duration-seconds", 0L));
+    }
+
+    public long getRoundRevealIntervalSeconds() {
+        if (lobbyRevealIntervalSecondsOverride > 0L) {
+            return lobbyRevealIntervalSecondsOverride;
+        }
+        return Math.max(10L, plugin.getConfig().getLong("game.reveal-interval-seconds", 180L));
     }
 
     public boolean isBorderEnabled() {
@@ -122,11 +162,6 @@ public final class GameManager {
             return false;
         }
 
-        if (!spawnManager.resetGameWorldFromTemplateIfEnabled()) {
-            uiManager.error(starter, "地图重置失败，请检查模板世界配置。");
-            return false;
-        }
-
         List<Player> readyPlayers = playerDataManager.getReadyOnlinePlayers();
         int minReady = Math.max(2, plugin.getConfig().getInt("game.min-ready-players", 2));
         if (readyPlayers.size() < minReady) {
@@ -146,17 +181,27 @@ public final class GameManager {
             return false;
         }
 
+        if (!spawnManager.resetGameWorldFromTemplateIfEnabled()) {
+            uiManager.error(starter, "地图重置失败，请检查模板世界配置。");
+            return false;
+        }
+
         resetGameWorldEnvironment(gameWorld);
 
         activePlayers.clear();
         eliminationOrder.clear();
+        survivalBonusMillisByPlayer.clear();
 
         for (Player player : readyPlayers) {
             PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());
             data.setEliminated(false);
             data.setSpectator(false);
             data.setConditionRevealed(false);
+            data.setConditionActiveAtMillis(0L);
             data.setTaskPoints(0);
+            data.setTotalEarnedTaskPoints(0);
+            data.setRoundStartMillis(System.currentTimeMillis());
+            data.setEliminatedAtMillis(0L);
 
             activePlayers.add(player.getUniqueId());
 
@@ -176,13 +221,18 @@ public final class GameManager {
         conditionManager.assignHiddenConditions(readyPlayers);
 
         gameState = GameState.RUNNING;
-        conditionManager.startRevealTask();
+        conditionManager.startRevealTask(getRoundRevealIntervalSeconds());
         powerupManager.startRound();
         taskManager.startRound();
         startBorderShrink(gameWorld);
+        scheduleRoundEndIfNeeded();
 
         uiManager.broadcast(plugin.getConfig().getString("messages.game-start", "游戏开始。"));
         uiManager.broadcast("本局玩家数：" + readyPlayers.size());
+        uiManager.broadcast("本局参数：初始命数=" + getRoundInitialLives()
+                + "，规则揭示间隔=" + getRoundRevealIntervalSeconds() + "秒"
+                + "，总时长=" + (getRoundDurationSeconds() > 0 ? getRoundDurationSeconds() + "秒" : "不限时"));
+        uiManager.playSoundToAll(Sound.BLOCK_BEACON_ACTIVATE, 0.9F, 1.0F);
         return true;
     }
 
@@ -213,6 +263,7 @@ public final class GameManager {
 
         data.setEliminated(true);
         data.setSpectator(true);
+        data.setEliminatedAtMillis(System.currentTimeMillis());
         eliminationOrder.add(playerId);
 
         plugin.getServer().getScheduler().runTask(plugin, () -> {
@@ -277,16 +328,27 @@ public final class GameManager {
             winner = plugin.getServer().getPlayer(alive.getFirst());
         }
 
-        finishGame(winner, null);
+        if (winner != null) {
+            uiManager.showCenterTitleToAll("游戏结束", "5秒后返回重生点");
+            survivalBonusMillisByPlayer.put(winner.getUniqueId(), 5000L);
+            finishGame(winner, null, 5L);
+            return;
+        }
+        finishGame(winner, null, 0L);
     }
 
     public void finishGame(Player winner, String forcedReason) {
+        finishGame(winner, forcedReason, 0L);
+    }
+
+    public void finishGame(Player winner, String forcedReason, long cleanupDelaySeconds) {
         gameState = GameState.ENDING;
 
         conditionManager.stopRevealTask();
         powerupManager.stopRound();
         taskManager.stopRound();
         stopBorderShrink();
+        cancelRoundEndTask();
 
         List<FinalStanding> standings = buildFinalStandings();
         FinalStanding champion = standings.isEmpty() ? null : standings.getFirst();
@@ -301,19 +363,23 @@ public final class GameManager {
             String prefixText = plugin.getConfig().getString("messages.prefix", "[隐藏淘汰] ").trim();
             uiManager.showCenterTitleToAll(winnerMessage, prefixText);
 
-            uiManager.broadcast("本局按生存排名与任务积分综合评分决出胜者。");
-            uiManager.broadcast("冠军详情：总分=" + champion.compositeScore()
-                    + "，积分=" + champion.taskPoints()
-                    + "，生存排名=#" + champion.placementRank());
+            uiManager.broadcast(ChatColor.GOLD + "[结算] 排名规则：存活时长 > 完成任务数 > 累计赚取积分。");
+            uiManager.broadcast(ChatColor.GREEN + "冠军详情："
+                    + ChatColor.YELLOW + "存活时长=" + formatDuration(champion.survivalSeconds())
+                    + ChatColor.AQUA + "，完成任务=" + champion.completedTasks()
+                    + ChatColor.LIGHT_PURPLE + "，累计赚取积分=" + champion.totalEarnedTaskPoints()
+                    + ChatColor.WHITE + "，排名=#" + champion.placementRank());
 
             uiManager.broadcast("本局综合排行榜前3名：");
             int top = Math.min(3, standings.size());
             for (int i = 0; i < top; i++) {
                 FinalStanding s = standings.get(i);
-                uiManager.broadcast("#" + (i + 1) + " " + s.playerName()
-                        + "（总分=" + s.compositeScore()
-                        + "，积分=" + s.taskPoints()
-                        + "，生存排名=#" + s.placementRank()
+                uiManager.broadcast(ChatColor.YELLOW + "#" + (i + 1) + " " + ChatColor.WHITE + s.playerName()
+                        + ChatColor.GRAY + "（存活=" + ChatColor.GREEN + formatDuration(s.survivalSeconds())
+                        + ChatColor.GRAY + "，任务完成=" + ChatColor.AQUA + s.completedTasks()
+                        + ChatColor.GRAY + "，累计赚取积分=" + ChatColor.LIGHT_PURPLE + s.totalEarnedTaskPoints()
+                        + ChatColor.GRAY
+                        + "，排名=#" + s.placementRank()
                         + "）");
             }
         } else if (winner != null) {
@@ -325,39 +391,60 @@ public final class GameManager {
             uiManager.broadcast("本局无胜者。");
         }
 
+        uiManager.playSoundToAll(Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.9F, 1.0F);
+        uiManager.broadcast(ChatColor.GOLD + "[结算] 本场玩家规则清单：");
+        for (UUID playerId : activePlayers) {
+            PlayerGameData data = playerDataManager.get(playerId);
+            if (data == null) {
+                continue;
+            }
+            String condition = data.getAssignedCondition() == null ? "未分配" : data.getAssignedCondition().getDisplayName();
+            String status = data.isConditionRevealed() ? "已公开" : "未公开";
+            String triggered = data.isEliminated() ? "已触发/淘汰" : "未触发";
+            uiManager.broadcast(ChatColor.GRAY + "- " + ChatColor.WHITE + resolvePlayerName(playerId)
+                    + ChatColor.GRAY + " -> " + ChatColor.GREEN + condition
+                    + ChatColor.DARK_GRAY + "（" + status + "，" + triggered + "）");
+        }
+
         Set<UUID> needBack = new HashSet<>(activePlayers);
         for (Player joined : playerDataManager.getJoinedOnlinePlayers()) {
             needBack.add(joined.getUniqueId());
         }
-
-        for (UUID uuid : needBack) {
-            Player player = plugin.getServer().getPlayer(uuid);
-            if (player == null || !player.isOnline()) {
-                continue;
+        Location lobbyLocation = spawnManager.getLobbyLocation();
+        if (lobbyLocation != null) {
+            for (UUID uuid : needBack) {
+                Player player = plugin.getServer().getPlayer(uuid);
+                if (player == null || !player.isOnline()) {
+                    continue;
+                }
+                player.setRespawnLocation(lobbyLocation, true);
             }
-            player.setGameMode(GameMode.ADVENTURE);
-            clearPlayerInventory(player);
-            giveLobbyItems(player);
-            spawnManager.teleportToLobby(player);
         }
 
-        plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+        Runnable cleanupAction = () -> {
             for (UUID uuid : needBack) {
                 Player player = plugin.getServer().getPlayer(uuid);
                 if (player == null || !player.isOnline()) {
                     continue;
                 }
                 player.setGameMode(GameMode.ADVENTURE);
+                clearPlayerInventory(player);
+                giveLobbyItems(player);
                 spawnManager.teleportToLobby(player);
             }
-        }, 20L);
-
-        playerDataManager.resetAllRoundState();
-        activePlayers.clear();
-        eliminationOrder.clear();
+            playerDataManager.resetAllRoundState();
+            activePlayers.clear();
+            eliminationOrder.clear();
+            survivalBonusMillisByPlayer.clear();
+            gameState = GameState.WAITING;
+        };
+        if (cleanupDelaySeconds > 0L) {
+            plugin.getServer().getScheduler().runTaskLater(plugin, cleanupAction, cleanupDelaySeconds * 20L);
+        } else {
+            cleanupAction.run();
+        }
 
         uiManager.broadcast(plugin.getConfig().getString("messages.game-end", "本局结束。"));
-        gameState = GameState.WAITING;
     }
 
     public void shutdown() {
@@ -365,6 +452,27 @@ public final class GameManager {
         powerupManager.stopRound();
         taskManager.stopRound();
         stopBorderShrink();
+        cancelRoundEndTask();
+    }
+
+    private void scheduleRoundEndIfNeeded() {
+        cancelRoundEndTask();
+        long durationSeconds = getRoundDurationSeconds();
+        if (durationSeconds <= 0L) {
+            return;
+        }
+        roundEndTask = plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+            if (gameState == GameState.RUNNING) {
+                finishGame(null, "游戏总时长已到，自动进入结算。");
+            }
+        }, durationSeconds * 20L);
+    }
+
+    private void cancelRoundEndTask() {
+        if (roundEndTask != null) {
+            roundEndTask.cancel();
+            roundEndTask = null;
+        }
     }
 
     private void startBorderShrink(World world) {
@@ -510,70 +618,55 @@ public final class GameManager {
         }
 
         List<UUID> participants = new ArrayList<>(activePlayers);
-        List<UUID> alivePlayers = new ArrayList<>();
+        List<FinalStanding> standings = new ArrayList<>();
+        long now = System.currentTimeMillis();
         for (UUID playerId : participants) {
             PlayerGameData data = playerDataManager.get(playerId);
-            if (data != null && !data.isEliminated()) {
-                alivePlayers.add(playerId);
+            long roundStart = data == null ? 0L : data.getRoundStartMillis();
+            long end = now;
+            if (data != null && data.getEliminatedAtMillis() > 0L) {
+                end = data.getEliminatedAtMillis();
             }
-        }
-
-        alivePlayers.sort(Comparator
-                .comparingInt((UUID id) -> taskManager.getPlayerTaskPoints(id))
-                .reversed()
-                .thenComparing(this::resolvePlayerName));
-
-        Map<UUID, Integer> placementByPlayer = new HashMap<>();
-        int rankCursor = 1;
-
-        for (UUID aliveId : alivePlayers) {
-            placementByPlayer.put(aliveId, rankCursor++);
-        }
-
-        for (int i = eliminationOrder.size() - 1; i >= 0; i--) {
-            UUID eliminatedId = eliminationOrder.get(i);
-            if (!participants.contains(eliminatedId) || placementByPlayer.containsKey(eliminatedId)) {
-                continue;
-            }
-            placementByPlayer.put(eliminatedId, rankCursor++);
-        }
-
-        for (UUID playerId : participants) {
-            if (!placementByPlayer.containsKey(playerId)) {
-                placementByPlayer.put(playerId, rankCursor++);
-            }
-        }
-
-        int totalPlayers = participants.size();
-        int placementWeight = Math.max(0, plugin.getConfig().getInt("result-scoring.placement-weight", 10));
-        int taskPointWeight = Math.max(0, plugin.getConfig().getInt("result-scoring.task-points-weight", 1));
-
-        List<FinalStanding> standings = new ArrayList<>();
-        for (UUID playerId : participants) {
-            int placementRank = placementByPlayer.getOrDefault(playerId, totalPlayers);
-            int placementScore = Math.max(1, totalPlayers - placementRank + 1);
-            int taskPoints = taskManager.getPlayerTaskPoints(playerId);
-            int compositeScore = placementScore * placementWeight + taskPoints * taskPointWeight;
-            boolean aliveAtEnd = alivePlayers.contains(playerId);
+            long survivalMillis = Math.max(0L, end - roundStart);
+            survivalMillis += survivalBonusMillisByPlayer.getOrDefault(playerId, 0L);
+            long survivalSeconds = survivalMillis / 1000L;
+            int completedTasks = data == null ? 0 : data.getCompletedTaskCount();
+            int totalEarnedTaskPoints = taskManager.getPlayerTotalEarnedTaskPoints(playerId);
+            boolean aliveAtEnd = data != null && !data.isEliminated();
 
             standings.add(new FinalStanding(
                     playerId,
                     resolvePlayerName(playerId),
-                    placementRank,
-                    taskPoints,
-                    compositeScore,
+                    0,
+                    survivalSeconds,
+                    completedTasks,
+                    totalEarnedTaskPoints,
                     aliveAtEnd
             ));
         }
 
         standings.sort(Comparator
-                .comparingInt(FinalStanding::compositeScore)
+                .comparingLong(FinalStanding::survivalSeconds)
                 .reversed()
-                .thenComparing(Comparator.comparingInt(FinalStanding::taskPoints).reversed())
-                .thenComparingInt(FinalStanding::placementRank)
+                .thenComparing(Comparator.comparingInt(FinalStanding::completedTasks).reversed())
+                .thenComparing(Comparator.comparingInt(FinalStanding::totalEarnedTaskPoints).reversed())
                 .thenComparing(FinalStanding::playerName));
 
-        return standings;
+        List<FinalStanding> ranked = new ArrayList<>();
+        for (int i = 0; i < standings.size(); i++) {
+            FinalStanding s = standings.get(i);
+            ranked.add(new FinalStanding(
+                    s.playerId(),
+                    s.playerName(),
+                    i + 1,
+                    s.survivalSeconds(),
+                    s.completedTasks(),
+                    s.totalEarnedTaskPoints(),
+                    s.aliveAtEnd()
+            ));
+        }
+
+        return ranked;
     }
 
     private String resolvePlayerName(UUID playerId) {
@@ -590,8 +683,9 @@ public final class GameManager {
             UUID playerId,
             String playerName,
             int placementRank,
-            int taskPoints,
-            int compositeScore,
+            long survivalSeconds,
+            int completedTasks,
+            int totalEarnedTaskPoints,
             boolean aliveAtEnd
     ) {
     }

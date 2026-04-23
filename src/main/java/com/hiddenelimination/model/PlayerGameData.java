@@ -26,15 +26,23 @@ public final class PlayerGameData {
 
     /** 该玩家的条件是否已被系统公开 */
     private boolean conditionRevealed;
+    /** 条件公开后何时开始生效（毫秒时间戳） */
+    private long conditionActiveAtMillis;
 
     /** Global task score in current round */
     private int taskPoints;
+    /** Historical total earned task points in current round */
+    private int totalEarnedTaskPoints;
 
     /** Completed global task count in current round */
     private int completedTaskCount;
 
     /** Remaining task lives in current round */
     private int taskLivesRemaining;
+    /** 回合开始时间（毫秒） */
+    private long roundStartMillis;
+    /** 被淘汰时间（毫秒，未淘汰为0） */
+    private long eliminatedAtMillis;
 
     public PlayerGameData(UUID playerId) {
         this.playerId = playerId;
@@ -44,9 +52,13 @@ public final class PlayerGameData {
         this.spectator = false;
         this.assignedCondition = null;
         this.conditionRevealed = false;
+        this.conditionActiveAtMillis = 0L;
         this.taskPoints = 0;
+        this.totalEarnedTaskPoints = 0;
         this.completedTaskCount = 0;
         this.taskLivesRemaining = 0;
+        this.roundStartMillis = 0L;
+        this.eliminatedAtMillis = 0L;
     }
 
     public UUID getPlayerId() {
@@ -101,6 +113,14 @@ public final class PlayerGameData {
         this.conditionRevealed = conditionRevealed;
     }
 
+    public long getConditionActiveAtMillis() {
+        return conditionActiveAtMillis;
+    }
+
+    public void setConditionActiveAtMillis(long conditionActiveAtMillis) {
+        this.conditionActiveAtMillis = Math.max(0L, conditionActiveAtMillis);
+    }
+
     public int getTaskPoints() {
         return taskPoints;
     }
@@ -114,6 +134,7 @@ public final class PlayerGameData {
             return;
         }
         this.taskPoints += delta;
+        this.totalEarnedTaskPoints += delta;
     }
 
     public void deductTaskPoints(int delta) {
@@ -125,6 +146,14 @@ public final class PlayerGameData {
 
     public int getCompletedTaskCount() {
         return completedTaskCount;
+    }
+
+    public int getTotalEarnedTaskPoints() {
+        return totalEarnedTaskPoints;
+    }
+
+    public void setTotalEarnedTaskPoints(int totalEarnedTaskPoints) {
+        this.totalEarnedTaskPoints = Math.max(0, totalEarnedTaskPoints);
     }
 
     public void incrementCompletedTaskCount() {
@@ -146,6 +175,22 @@ public final class PlayerGameData {
         return taskLivesRemaining;
     }
 
+    public long getRoundStartMillis() {
+        return roundStartMillis;
+    }
+
+    public void setRoundStartMillis(long roundStartMillis) {
+        this.roundStartMillis = Math.max(0L, roundStartMillis);
+    }
+
+    public long getEliminatedAtMillis() {
+        return eliminatedAtMillis;
+    }
+
+    public void setEliminatedAtMillis(long eliminatedAtMillis) {
+        this.eliminatedAtMillis = Math.max(0L, eliminatedAtMillis);
+    }
+
     /**
      * 每局结束后重置局内状态，保留是否加入房间。
      */
@@ -155,8 +200,12 @@ public final class PlayerGameData {
         this.spectator = false;
         this.assignedCondition = null;
         this.conditionRevealed = false;
+        this.conditionActiveAtMillis = 0L;
         this.taskPoints = 0;
+        this.totalEarnedTaskPoints = 0;
         this.completedTaskCount = 0;
         this.taskLivesRemaining = 0;
+        this.roundStartMillis = 0L;
+        this.eliminatedAtMillis = 0L;
     }
 }

@@ -4,6 +4,7 @@ import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.Material;
+import org.bukkit.Sound;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
@@ -128,7 +129,9 @@ public final class TaskManager {
         this.roundStartEpochSecond = nowSecond();
         this.taskSequence = 0;
 
-        int initialLives = Math.max(1, plugin.getConfig().getInt("tasks.lives-per-player", 3));
+        int initialLives = gameManager == null
+                ? Math.max(1, plugin.getConfig().getInt("tasks.lives-per-player", 3))
+                : gameManager.getRoundInitialLives();
         if (gameManager != null) {
             for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
                 PlayerGameData data = playerDataManager.get(playerId);
@@ -364,6 +367,11 @@ public final class TaskManager {
         return data == null ? 0 : data.getTaskPoints();
     }
 
+    public int getPlayerTotalEarnedTaskPoints(UUID playerId) {
+        PlayerGameData data = playerDataManager.get(playerId);
+        return data == null ? 0 : data.getTotalEarnedTaskPoints();
+    }
+
     public int getPlayerTaskLives(UUID playerId) {
         PlayerGameData data = playerDataManager.get(playerId);
         return data == null ? 0 : data.getTaskLivesRemaining();
@@ -447,8 +455,9 @@ public final class TaskManager {
             return;
         }
 
-        uiManager.broadcast("全员任务 #" + currentTask.index() + " 已发布，难度 " + difficultyTier + "。");
-        uiManager.broadcast("任务内容：" + taskType.displayName() + "（限时 " + timeLimitSeconds + " 秒）");
+        uiManager.broadcast("[任务] 全员任务 #" + currentTask.index() + " 已发布，难度 " + difficultyTier + "。");
+        uiManager.broadcast("[任务] 内容：" + taskType.displayName() + "（限时 " + timeLimitSeconds + " 秒）");
+        uiManager.playSoundToAll(Sound.BLOCK_NOTE_BLOCK_PLING, 0.8F, 1.4F);
 
         taskDeadlineEpochSecond = nowSecond() + timeLimitSeconds;
         taskDeadlineTask = plugin.getServer().getScheduler().runTaskLater(plugin, this::handleTaskDeadline, timeLimitSeconds * 20L);
@@ -494,7 +503,7 @@ public final class TaskManager {
             }
         }
 
-        uiManager.broadcast("任务 #" + task.index() + " 结算："
+        uiManager.broadcast("[任务] 任务 #" + task.index() + " 结算："
                 + lifeLostPlayers + " 人扣除生命，"
                 + eliminatedCount + " 人淘汰。");
         clearCurrentTask();
@@ -539,10 +548,10 @@ public final class TaskManager {
         }
 
         uiManager.success(player, "任务完成，排名 #" + rank + "，+" + gainedPoints + " 积分。");
-        uiManager.broadcast(player.getName() + " 完成了任务 #" + task.index() + "，排名 #" + rank + "。");
+        uiManager.broadcast("[任务] " + player.getName() + " 完成了任务 #" + task.index() + "，排名 #" + rank + "。");
 
         if (allAlivePlayersFinished()) {
-            uiManager.broadcast("所有存活玩家都完成了本任务，本轮无人扣命。");
+            uiManager.broadcast("[任务] 所有存活玩家都完成了本任务，本轮无人扣命。");
             clearCurrentTask();
             scheduleNextTaskPublish();
         }
@@ -599,6 +608,12 @@ public final class TaskManager {
     }
 
     private int resolveDifficultyTier() {
+        int easyOnlyTaskCount = Math.max(0, plugin.getConfig().getInt("tasks.easy-only-task-count", 4));
+        int nextTaskIndex = taskSequence + 1;
+        if (nextTaskIndex <= easyOnlyTaskCount) {
+            return 1;
+        }
+
         long upgradeInterval = Math.max(60L, plugin.getConfig().getLong("tasks.difficulty-upgrade-interval-seconds", 360L));
         long elapsed = Math.max(0L, nowSecond() - roundStartEpochSecond);
 

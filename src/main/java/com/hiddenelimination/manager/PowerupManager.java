@@ -7,6 +7,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -32,7 +33,7 @@ public final class PowerupManager {
     private static final String MENU_TITLE = ChatColor.GOLD + "道具兑换";
     private static final String RULE_TOOL_MENU_TITLE = ChatColor.YELLOW + "规则道具";
     private static final String PROBE_MENU_TITLE = ChatColor.YELLOW + "规则试探";
-    private static final String ARMOR_MENU_TITLE = ChatColor.GREEN + "积分兑换套装";
+    private static final String ARMOR_MENU_TITLE = ChatColor.GREEN + "积分兑换装备强化";
     private static final String ORE_MENU_TITLE = ChatColor.AQUA + "矿物兑换积分";
     private static final int MENU_SIZE = 27;
 
@@ -231,7 +232,11 @@ public final class PowerupManager {
 
         pendingFakeBroadcastCount--;
         ConditionType fake = randomConditionExcluding(realCondition);
-        uiManager.broadcast("规则公开：" + fake.getDisplayName());
+        if (conditionManager != null) {
+            conditionManager.revealFakeCondition(fake);
+        } else {
+            uiManager.broadcast("[规则] 规则公开：" + fake.getDisplayName());
+        }
     }
 
     private boolean handleMainMenuClick(InventoryClickEvent event) {
@@ -397,11 +402,11 @@ public final class PowerupManager {
 
         menu.setItem(SLOT_ARMOR_SET, createMenuItem(
                 Material.IRON_CHESTPLATE,
-                ChatColor.GREEN + "积分兑换套装",
+                ChatColor.GREEN + "积分兑换装备强化",
                 List.of(
-                        ChatColor.GRAY + "使用任务积分兑换不同等级套装",
+                        ChatColor.GRAY + "使用任务积分强化当前穿戴护甲",
                         ChatColor.GRAY + "当前积分：" + ChatColor.LIGHT_PURPLE + taskPoints,
-                        ChatColor.DARK_GRAY + "点击进入套装兑换"
+                        ChatColor.DARK_GRAY + "点击进入装备强化"
                 )
         ));
 
@@ -522,8 +527,8 @@ public final class PowerupManager {
                 Material.EXPERIENCE_BOTTLE,
                 ChatColor.LIGHT_PURPLE + "当前积分：" + points,
                 List.of(
-                        ChatColor.GRAY + "点击套装直接兑换",
-                        ChatColor.DARK_GRAY + "兑换后会立即扣分并发放4件套"
+                        ChatColor.GRAY + "点击后对已穿戴护甲附魔强化",
+                        ChatColor.DARK_GRAY + "不会发放整套装备"
                 )
         ));
 
@@ -612,7 +617,8 @@ public final class PowerupManager {
         meta.setDisplayName(ChatColor.GREEN + armorSet.displayName);
         meta.setLore(List.of(
                 ChatColor.GRAY + "价格：" + ChatColor.LIGHT_PURPLE + price + " 积分",
-                ChatColor.GRAY + "包含：头盔、胸甲、护腿、靴子",
+                ChatColor.GRAY + "效果：保护 " + armorSet.protectionLevel + "，耐久 " + armorSet.unbreakingLevel,
+                ChatColor.GRAY + "对象：当前已穿戴护甲（不会发放新装备）",
                 affordable ? ChatColor.GREEN + "可兑换" : ChatColor.RED + "积分不足",
                 ChatColor.DARK_GRAY + "点击立即兑换"
         ));
@@ -880,7 +886,7 @@ public final class PowerupManager {
             return;
         }
         if (data.isEliminated()) {
-            uiManager.warn(player, "已淘汰状态无法兑换套装");
+            uiManager.warn(player, "已淘汰状态无法兑换强化");
             return;
         }
 
@@ -891,40 +897,35 @@ public final class PowerupManager {
             return;
         }
 
-        data.deductTaskPoints(price);
-        giveArmorSet(player, armorSet);
-        uiManager.success(player, "兑换成功：" + armorSet.displayName + "，消耗 " + price + " 积分，剩余 " + data.getTaskPoints() + " 积分");
-    }
-
-    private void giveArmorSet(Player player, ArmorSet armorSet) {
-        PlayerInventory inventory = player.getInventory();
-
-        giveArmorPiece(player, inventory.getHelmet(), armorSet.helmet, ArmorSlot.HELMET);
-        giveArmorPiece(player, inventory.getChestplate(), armorSet.chestplate, ArmorSlot.CHESTPLATE);
-        giveArmorPiece(player, inventory.getLeggings(), armorSet.leggings, ArmorSlot.LEGGINGS);
-        giveArmorPiece(player, inventory.getBoots(), armorSet.boots, ArmorSlot.BOOTS);
-    }
-
-    private void giveArmorPiece(Player player, ItemStack equipped, Material material, ArmorSlot armorSlot) {
-        ItemStack piece = new ItemStack(material);
-        PlayerInventory inventory = player.getInventory();
-
-        if (equipped == null || equipped.getType() == Material.AIR) {
-            switch (armorSlot) {
-                case HELMET -> inventory.setHelmet(piece);
-                case CHESTPLATE -> inventory.setChestplate(piece);
-                case LEGGINGS -> inventory.setLeggings(piece);
-                case BOOTS -> inventory.setBoots(piece);
-            }
+        int upgradedCount = enchantEquippedArmor(player, armorSet);
+        if (upgradedCount <= 0) {
+            uiManager.warn(player, "你当前没有穿戴可强化的护甲。");
             return;
         }
 
-        Map<Integer, ItemStack> remaining = inventory.addItem(piece);
-        if (!remaining.isEmpty()) {
-            for (ItemStack leftover : remaining.values()) {
-                player.getWorld().dropItemNaturally(player.getLocation(), leftover);
+        data.deductTaskPoints(price);
+        uiManager.success(player, "强化成功：" + armorSet.displayName + "，强化部位 " + upgradedCount
+                + " 件，消耗 " + price + " 积分，剩余 " + data.getTaskPoints() + " 积分");
+    }
+
+    private int enchantEquippedArmor(Player player, ArmorSet armorSet) {
+        PlayerInventory inventory = player.getInventory();
+        ItemStack[] equipped = new ItemStack[]{
+                inventory.getHelmet(),
+                inventory.getChestplate(),
+                inventory.getLeggings(),
+                inventory.getBoots()
+        };
+        int upgradedCount = 0;
+        for (ItemStack armor : equipped) {
+            if (armor == null || armor.getType() == Material.AIR) {
+                continue;
             }
+            armor.addUnsafeEnchantment(Enchantment.PROTECTION, armorSet.protectionLevel);
+            armor.addUnsafeEnchantment(Enchantment.UNBREAKING, armorSet.unbreakingLevel);
+            upgradedCount++;
         }
+        return upgradedCount;
     }
 
     private boolean consumeCreditFor(UUID playerId, PowerType type) {
@@ -1059,102 +1060,77 @@ public final class PowerupManager {
         }
     }
 
-    private enum ArmorSlot {
-        HELMET,
-        CHESTPLATE,
-        LEGGINGS,
-        BOOTS
-    }
-
     private enum ArmorSet {
         LEATHER(
-                "皮革套装",
+                "基础强化 I",
                 "leather",
                 8,
                 Material.LEATHER_CHESTPLATE,
-                Material.LEATHER_HELMET,
-                Material.LEATHER_CHESTPLATE,
-                Material.LEATHER_LEGGINGS,
-                Material.LEATHER_BOOTS
+                1,
+                1
         ),
         CHAINMAIL(
-                "锁链套装",
+                "基础强化 II",
                 "chainmail",
                 12,
                 Material.CHAINMAIL_CHESTPLATE,
-                Material.CHAINMAIL_HELMET,
-                Material.CHAINMAIL_CHESTPLATE,
-                Material.CHAINMAIL_LEGGINGS,
-                Material.CHAINMAIL_BOOTS
+                2,
+                1
         ),
         GOLDEN(
-                "金质套装",
+                "防护强化 I",
                 "golden",
                 16,
                 Material.GOLDEN_CHESTPLATE,
-                Material.GOLDEN_HELMET,
-                Material.GOLDEN_CHESTPLATE,
-                Material.GOLDEN_LEGGINGS,
-                Material.GOLDEN_BOOTS
+                2,
+                2
         ),
         IRON(
-                "铁质套装",
+                "防护强化 II",
                 "iron",
                 22,
                 Material.IRON_CHESTPLATE,
-                Material.IRON_HELMET,
-                Material.IRON_CHESTPLATE,
-                Material.IRON_LEGGINGS,
-                Material.IRON_BOOTS
+                3,
+                2
         ),
         DIAMOND(
-                "钻石套装",
+                "防护强化 III",
                 "diamond",
                 30,
                 Material.DIAMOND_CHESTPLATE,
-                Material.DIAMOND_HELMET,
-                Material.DIAMOND_CHESTPLATE,
-                Material.DIAMOND_LEGGINGS,
-                Material.DIAMOND_BOOTS
+                3,
+                3
         ),
         NETHERITE(
-                "下界合金套装",
+                "终极强化",
                 "netherite",
                 40,
                 Material.NETHERITE_CHESTPLATE,
-                Material.NETHERITE_HELMET,
-                Material.NETHERITE_CHESTPLATE,
-                Material.NETHERITE_LEGGINGS,
-                Material.NETHERITE_BOOTS
+                4,
+                3
         );
 
         private final String displayName;
         private final String configKey;
         private final int defaultPrice;
         private final Material iconMaterial;
-        private final Material helmet;
-        private final Material chestplate;
-        private final Material leggings;
-        private final Material boots;
+        private final int protectionLevel;
+        private final int unbreakingLevel;
 
         ArmorSet(
                 String displayName,
                 String configKey,
                 int defaultPrice,
                 Material iconMaterial,
-                Material helmet,
-                Material chestplate,
-                Material leggings,
-                Material boots
+                int protectionLevel,
+                int unbreakingLevel
         ) {
             this.displayName = displayName;
             this.configKey = configKey;
             this.defaultPrice = defaultPrice;
             this.iconMaterial = iconMaterial;
-            this.helmet = helmet;
-            this.chestplate = chestplate;
-            this.leggings = leggings;
-            this.boots = boots;
+            this.protectionLevel = protectionLevel;
+            this.unbreakingLevel = unbreakingLevel;
         }
 
         private int price(HiddenEliminationPlugin plugin) {

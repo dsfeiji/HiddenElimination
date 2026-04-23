@@ -6,6 +6,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Sound;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
@@ -89,6 +90,28 @@ public final class UIManager {
         }
     }
 
+    public void showRuleRevealTitleToAll(String ruleName, int delaySeconds) {
+        Title.Times times = Title.Times.times(
+                Duration.ofMillis(200),
+                Duration.ofMillis(1800),
+                Duration.ofMillis(400)
+        );
+        Title screenTitle = Title.title(
+                Component.text(ChatColor.LIGHT_PURPLE + "新规则揭示"),
+                Component.text(ChatColor.WHITE + ruleName + ChatColor.GRAY + "（" + delaySeconds + "秒后生效）"),
+                times
+        );
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.showTitle(screenTitle);
+        }
+    }
+
+    public void playSoundToAll(Sound sound, float volume, float pitch) {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            player.playSound(player.getLocation(), sound, volume, pitch);
+        }
+    }
+
     public void sendStatus(CommandSender sender, PlayerDataManager playerDataManager, GameState gameState) {
         sender.sendMessage(ChatColor.GOLD + "========== 隐藏淘汰 状态 ==========");
         sender.sendMessage(ChatColor.YELLOW + "阶段: " + ChatColor.WHITE + gameState.name());
@@ -98,10 +121,17 @@ public final class UIManager {
 
         if (sender instanceof Player player && taskManager != null) {
             sender.sendMessage(ChatColor.YELLOW + "任务积分: " + ChatColor.WHITE + taskManager.getPlayerTaskPoints(player.getUniqueId()));
+            sender.sendMessage(ChatColor.YELLOW + "累计赚取积分: " + ChatColor.WHITE + taskManager.getPlayerTotalEarnedTaskPoints(player.getUniqueId()));
             sender.sendMessage(ChatColor.YELLOW + "任务生命: " + ChatColor.WHITE + taskManager.getPlayerTaskLives(player.getUniqueId()));
             if (taskManager.hasActiveTask()) {
                 sender.sendMessage(ChatColor.YELLOW + "当前任务: " + ChatColor.WHITE + taskManager.getCurrentTaskDisplay());
             }
+        }
+        if (gameManager != null) {
+            sender.sendMessage(ChatColor.YELLOW + "本局初始命数: " + ChatColor.WHITE + gameManager.getRoundInitialLives());
+            sender.sendMessage(ChatColor.YELLOW + "本局总时长: " + ChatColor.WHITE
+                    + (gameManager.getRoundDurationSeconds() > 0 ? gameManager.getRoundDurationSeconds() + "秒" : "不限时"));
+            sender.sendMessage(ChatColor.YELLOW + "规则揭示间隔: " + ChatColor.WHITE + gameManager.getRoundRevealIntervalSeconds() + "秒");
         }
     }
 
@@ -121,8 +151,11 @@ public final class UIManager {
                 if (gameManager.isRunning()) {
                     updateGameSidebar(player);
                     updateGameActionBar(player);
-                } else {
+                } else if (gameManager.getGameState() == GameState.WAITING) {
                     updateLobbySidebar(player);
+                    clearActionBar(player);
+                } else {
+                    // ENDING 阶段暂停UI刷新，仅清空 ActionBar。
                     clearActionBar(player);
                 }
             }
@@ -181,20 +214,20 @@ public final class UIManager {
         List<String> lines = new ArrayList<>();
         lines.add(ChatColor.GRAY + "----------------");
         lines.add(ChatColor.YELLOW + "存活: " + ChatColor.GREEN + alive + ChatColor.GRAY + "/" + ChatColor.WHITE + total);
-        lines.add(ChatColor.YELLOW + "已公开规则: " + ChatColor.AQUA + revealedCount);
-        lines.add(ChatColor.YELLOW + "任务积分: " + ChatColor.LIGHT_PURPLE + points);
-        lines.add(ChatColor.YELLOW + "任务生命: " + ChatColor.RED + lives);
+        lines.add(ChatColor.DARK_PURPLE + "[规则] 已公开: " + ChatColor.LIGHT_PURPLE + revealedCount);
+        lines.add(ChatColor.GREEN + "[任务] 当前积分: " + ChatColor.YELLOW + points);
+        lines.add(ChatColor.GREEN + "[任务] 任务生命: " + ChatColor.RED + lives);
 
         if (taskManager.hasActiveTask()) {
-            lines.add(ChatColor.YELLOW + "任务: " + ChatColor.WHITE + taskManager.getCurrentTaskDisplay());
-            lines.add(ChatColor.YELLOW + "进度: " + ChatColor.GREEN + progress + ChatColor.GRAY + "/" + ChatColor.WHITE + required);
-            lines.add(ChatColor.YELLOW + "任务倒计时: " + ChatColor.RED + formatSeconds(taskManager.getSecondsUntilTaskDeadline()));
+            lines.add(ChatColor.GREEN + "[任务] " + ChatColor.WHITE + taskManager.getCurrentTaskDisplay());
+            lines.add(ChatColor.GREEN + "[任务] 进度: " + ChatColor.GREEN + progress + ChatColor.GRAY + "/" + ChatColor.WHITE + required);
+            lines.add(ChatColor.GREEN + "[任务] 倒计时: " + ChatColor.RED + formatSeconds(taskManager.getSecondsUntilTaskDeadline()));
         } else {
-            lines.add(ChatColor.YELLOW + "下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish()));
+            lines.add(ChatColor.GREEN + "[任务] 下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish()));
         }
 
         lines.add(ChatColor.DARK_GRAY + " ");
-        lines.add(ChatColor.GOLD + "最新公开规则:");
+        lines.add(ChatColor.DARK_PURPLE + "[规则] 最新公开:");
 
         List<ConditionManager.RevealedCondition> reveals = conditionManager.getRevealedConditionsSnapshot();
         if (reveals.isEmpty()) {
@@ -203,7 +236,10 @@ public final class UIManager {
             int start = Math.max(0, reveals.size() - 4);
             for (int i = start; i < reveals.size(); i++) {
                 ConditionManager.RevealedCondition rc = reveals.get(i);
-                lines.add(ChatColor.RED + "- " + ChatColor.WHITE + rc.conditionType().getDisplayName());
+                boolean triggered = conditionManager.getTriggeredConditionsSnapshot().contains(rc.conditionType());
+                String status = triggered ? "已触发" : "未触发";
+                ChatColor base = triggered ? ChatColor.GRAY : ChatColor.GREEN;
+                lines.add(base + "- " + rc.conditionType().getDisplayName() + " [" + status + "]");
             }
         }
 
@@ -218,33 +254,13 @@ public final class UIManager {
 
         String borderText;
         if (!gameManager.isBorderEnabled()) {
-            borderText = ChatColor.GRAY + "边界: 关闭";
-        } else if (gameManager.isBorderShrinking()) {
-            long borderRemain = gameManager.getBorderSecondsUntilEnd();
-            int size = (int) gameManager.getCurrentBorderSize();
-            borderText = ChatColor.RED + "缩圈 " + ChatColor.YELLOW + formatSeconds(borderRemain)
-                    + ChatColor.GRAY + "(" + size + ")";
+            borderText = ChatColor.GRAY + "缩圈开始: --:--";
         } else {
             long untilStart = gameManager.getBorderSecondsUntilStart();
-            if (untilStart > 0) {
-                borderText = ChatColor.AQUA + "缩圈开始 " + ChatColor.YELLOW + formatSeconds(untilStart);
-            } else {
-                borderText = ChatColor.GRAY + "缩圈结束";
-            }
+            borderText = ChatColor.AQUA + "缩圈开始: " + ChatColor.YELLOW + formatSeconds(untilStart);
         }
 
-        String taskText;
-        if (taskManager.hasActiveTask()) {
-            taskText = ChatColor.GREEN + "任务 "
-                    + taskManager.getPlayerProgress(player.getUniqueId())
-                    + "/"
-                    + taskManager.getCurrentTaskRequiredCount()
-                    + " "
-                    + ChatColor.YELLOW + formatSeconds(taskManager.getSecondsUntilTaskDeadline())
-                    + ChatColor.GRAY + " 命:" + ChatColor.RED + taskManager.getPlayerTaskLives(player.getUniqueId());
-        } else {
-            taskText = ChatColor.GRAY + "下个任务 " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish());
-        }
+        String taskText = ChatColor.GREEN + "下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish());
 
         String text = ChatColor.GOLD + "下次公开规则: " + ChatColor.YELLOW + formatSeconds(ruleRemain)
                 + ChatColor.DARK_GRAY + " | " + taskText

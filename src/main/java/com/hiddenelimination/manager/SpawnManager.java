@@ -166,15 +166,33 @@ public final class SpawnManager {
 
         int spreadRadius = Math.max(16, plugin.getConfig().getInt("game.spread-radius", 200));
         for (Player player : players) {
-            player.teleport(randomSpawn(gameWorld, spreadRadius));
+            player.teleport(randomSpawn(gameWorld, spreadRadius, player));
         }
     }
 
-    private Location randomSpawn(World world, int spreadRadius) {
-        int x = random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
-        int z = random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
-        int y = world.getHighestBlockYAt(x, z) + 1;
-        return new Location(world, x + 0.5D, y, z + 0.5D);
+    private Location randomSpawn(World world, int spreadRadius, Player player) {
+        // Avoid watchdog stalls: only probe already-loaded chunks while selecting random spawns.
+        final int maxAttempts = 48;
+        for (int i = 0; i < maxAttempts; i++) {
+            int x = random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
+            int z = random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
+            int chunkX = x >> 4;
+            int chunkZ = z >> 4;
+
+            if (!world.isChunkLoaded(chunkX, chunkZ)) {
+                continue;
+            }
+
+            int y = world.getHighestBlockYAt(x, z) + 1;
+            return new Location(world, x + 0.5D, y, z + 0.5D);
+        }
+
+        // Fallback to world spawn if no loaded candidate chunk is found.
+        Location fallback = world.getSpawnLocation().clone();
+        int y = world.getHighestBlockYAt(fallback) + 1;
+        fallback.setY(y);
+        plugin.getLogger().warning("[出生分散] 未找到已加载随机区块，玩家 " + player.getName() + " 回退到世界出生点。");
+        return fallback.add(0.5D, 0.0D, 0.5D);
     }
 
     private World resolveWorld(String worldName) {
