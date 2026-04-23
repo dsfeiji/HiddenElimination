@@ -3,6 +3,7 @@ package com.hiddenelimination.listener;
 import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.SpawnManager;
 import org.bukkit.Location;
+import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
@@ -17,6 +18,8 @@ import org.bukkit.event.inventory.InventoryCreativeEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.event.weather.ThunderChangeEvent;
+import org.bukkit.event.weather.WeatherChangeEvent;
 
 /**
  * 大厅保护：
@@ -134,6 +137,30 @@ public final class LobbyProtectionListener implements Listener {
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onWeatherChange(WeatherChangeEvent event) {
+        if (!isLobbyWorld(event.getWorld())) {
+            return;
+        }
+
+        if (event.toWeatherState()) {
+            event.setCancelled(true);
+            spawnManager.enforceLobbyEnvironment();
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onThunderChange(ThunderChangeEvent event) {
+        if (!isLobbyWorld(event.getWorld())) {
+            return;
+        }
+
+        if (event.toThunderState()) {
+            event.setCancelled(true);
+            spawnManager.enforceLobbyEnvironment();
+        }
+    }
+
     private Player resolveAttacker(Entity damager) {
         if (damager instanceof Player player) {
             return player;
@@ -144,5 +171,10 @@ public final class LobbyProtectionListener implements Listener {
         }
 
         return null;
+    }
+
+    private boolean isLobbyWorld(World world) {
+        World lobbyWorld = spawnManager.getLobbyWorld();
+        return lobbyWorld != null && lobbyWorld.equals(world);
     }
 }

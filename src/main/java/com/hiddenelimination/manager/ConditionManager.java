@@ -108,8 +108,10 @@ public final class ConditionManager {
         if (gameManager == null || !gameManager.isRunning() || conditionType == null) {
             return;
         }
-        revealedConditions.add(new RevealedCondition(conditionType, true, System.currentTimeMillis()));
-        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName());
+
+        long activeAt = System.currentTimeMillis() + RULE_ENABLE_DELAY_MILLIS;
+        revealedConditions.add(new RevealedCondition(conditionType, true, activeAt));
+        announceRevealedCondition(conditionType);
     }
 
     public void revealRandomCondition() {
@@ -139,10 +141,7 @@ public final class ConditionManager {
 
         ConditionType conditionType = selected.getAssignedCondition();
         revealedConditions.add(new RevealedCondition(conditionType, false, activeAt));
-
-        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName() + "（3秒后生效）");
-        uiManager.showRuleRevealTitleToAll(conditionType.getDisplayName(), 3);
-        uiManager.playSoundToAll(Sound.BLOCK_BELL_USE, 0.9F, 1.2F);
+        announceRevealedCondition(conditionType);
         if (powerupManager != null) {
             powerupManager.onRuleRevealed(conditionType);
         }
@@ -213,5 +212,11 @@ public final class ConditionManager {
 
     private long nowSecond() {
         return System.currentTimeMillis() / 1000L;
+    }
+
+    private void announceRevealedCondition(ConditionType conditionType) {
+        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName() + "（3秒后生效）");
+        uiManager.showRuleRevealTitleToAll(conditionType.getDisplayName(), 3);
+        uiManager.playSoundToAll(Sound.BLOCK_BELL_USE, 0.9F, 1.2F);
     }
 }

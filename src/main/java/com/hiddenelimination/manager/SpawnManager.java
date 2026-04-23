@@ -12,18 +12,30 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 出生点和大厅传送管理。
  */
 public final class SpawnManager {
 
+    private static final double MIN_SPAWN_DISTANCE_BLOCKS = 48.0D;
+    private static final double MIN_SPAWN_DISTANCE_SQUARED = MIN_SPAWN_DISTANCE_BLOCKS * MIN_SPAWN_DISTANCE_BLOCKS;
+    private static final double BORDER_SPAWN_MARGIN_BLOCKS = 24.0D;
+    private static final String GENERATED_WORLD_INFIX = "_he_round_";
+
     private final HiddenEliminationPlugin plugin;
     private final Random random = new Random();
+    private final AtomicBoolean preparingWorld = new AtomicBoolean(false);
+
+    private volatile String activeGameWorldName;
+    private volatile String preparedGameWorldName;
 
     public SpawnManager(HiddenEliminationPlugin plugin) {
         this.plugin = plugin;
@@ -65,12 +77,41 @@ public final class SpawnManager {
         );
     }
 
-    public World getGameWorld() {
-        String worldName = plugin.getConfig().getString("game.world", "world");
-        if (worldName == null || worldName.isBlank()) {
-            return fallbackWorld();
+    public World getLobbyWorld() {
+        Location lobby = getLobbyLocation();
+        return lobby == null ? null : lobby.getWorld();
+    }
+
+    public void enforceLobbyEnvironment() {
+        World lobbyWorld = getLobbyWorld();
+        if (lobbyWorld == null) {
+            return;
         }
 
+        lobbyWorld.setTime(1000L);
+        lobbyWorld.setStorm(false);
+        lobbyWorld.setThundering(false);
+        lobbyWorld.setWeatherDuration(0);
+        lobbyWorld.setThunderDuration(0);
+    }
+
+    public void initializePreparedGameWorldAsync() {
+        if (!plugin.getConfig().getBoolean("game.reset-world-each-round", false)) {
+            return;
+        }
+
+        ensurePreparedGameWorldAsync();
+    }
+
+    public World getGameWorld() {
+        if (activeGameWorldName != null && !activeGameWorldName.isBlank()) {
+            World active = resolveWorld(activeGameWorldName);
+            if (active != null) {
+                return active;
+            }
+        }
+
+        String worldName = getConfiguredBaseWorldName();
         World world = resolveWorld(worldName);
         if (world != null) {
             return world;
@@ -79,70 +120,58 @@ public final class SpawnManager {
         return fallbackWorld();
     }
 
-    /**
-     * 每局开前可选地图重置：
-     * - 从 game.world-template 拷贝到 game.world
-     */
-    public boolean resetGameWorldFromTemplateIfEnabled() {
-        boolean enabled = plugin.getConfig().getBoolean("game.reset-world-each-round", false);
-        if (!enabled) {
-            return true;
+    public World acquireGameWorldForRound() {
+        if (!plugin.getConfig().getBoolean("game.reset-world-each-round", false)) {
+            World staticWorld = getGameWorld();
+            activeGameWorldName = staticWorld == null ? null : staticWorld.getName();
+            return staticWorld;
         }
 
-        String worldName = plugin.getConfig().getString("game.world", "world");
-        if (worldName == null || worldName.isBlank()) {
-            plugin.getLogger().warning("[地图重置] game.world 未配置");
-            return false;
+        String preparedName = preparedGameWorldName;
+        if (preparedName == null || preparedName.isBlank()) {
+            ensurePreparedGameWorldAsync();
+            return null;
         }
 
-        String templateName = plugin.getConfig().getString("game.world-template", worldName + "_template");
-        if (templateName == null || templateName.isBlank()) {
-            plugin.getLogger().warning("[地图重置] game.world-template 未配置");
-            return false;
+        World world = resolveWorld(preparedName);
+        if (world == null) {
+            preparedGameWorldName = null;
+            ensurePreparedGameWorldAsync();
+            return null;
         }
 
-        File worldContainer = Bukkit.getWorldContainer();
-        Path targetPath = new File(worldContainer, worldName).toPath();
-        Path templatePath = new File(worldContainer, templateName).toPath();
+        activeGameWorldName = preparedName;
+        preparedGameWorldName = null;
+        ensurePreparedGameWorldAsync();
+        return world;
+    }
 
-        if (!Files.exists(templatePath)) {
-            plugin.getLogger().warning("[地图重置] 模板世界不存在: " + templatePath);
-            return false;
+    public String getPreparedGameWorldStatus() {
+        if (!plugin.getConfig().getBoolean("game.reset-world-each-round", false)) {
+            return "静态地图模式";
         }
 
-        // 卸载目标世界并清人
-        World loaded = Bukkit.getWorld(worldName);
-        if (loaded != null) {
-            Location lobby = getLobbyLocation();
-            for (Player online : Bukkit.getOnlinePlayers()) {
-                if (online.getWorld().equals(loaded) && lobby != null) {
-                    online.teleport(lobby);
-                }
+        if (preparedGameWorldName != null) {
+            return "已就绪（原版随机世界）";
+        }
+
+        if (preparingWorld.get()) {
+            return "正在后台准备下一局地图";
+        }
+
+        return "下一局地图尚未准备";
+    }
+
+    public void onRoundFinished() {
+        String retiredWorldName = activeGameWorldName;
+        activeGameWorldName = null;
+
+        if (plugin.getConfig().getBoolean("game.reset-world-each-round", false)) {
+            if (retiredWorldName != null && !retiredWorldName.isBlank()) {
+                cleanupGeneratedWorldAsync(retiredWorldName);
             }
-
-            boolean unloaded = Bukkit.unloadWorld(loaded, false);
-            if (!unloaded) {
-                plugin.getLogger().warning("[地图重置] 卸载世界失败: " + worldName);
-                return false;
-            }
+            ensurePreparedGameWorldAsync();
         }
-
-        try {
-            deleteDirectory(targetPath);
-            copyDirectory(templatePath, targetPath);
-        } catch (IOException e) {
-            plugin.getLogger().severe("[地图重置] 文件操作失败: " + e.getMessage());
-            return false;
-        }
-
-        World recreated = Bukkit.createWorld(WorldCreator.name(worldName));
-        if (recreated == null) {
-            plugin.getLogger().severe("[地图重置] 重建世界失败: " + worldName);
-            return false;
-        }
-
-        plugin.getLogger().info("[地图重置] 已从模板重置世界: " + worldName + " <- " + templateName);
-        return true;
     }
 
     public void teleportToLobby(Player player) {
@@ -164,35 +193,164 @@ public final class SpawnManager {
             return;
         }
 
-        int spreadRadius = Math.max(16, plugin.getConfig().getInt("game.spread-radius", 200));
+        Location spawnCenter = getSpawnCenter(gameWorld);
+        int spreadRadius = resolveSpawnRadius(gameWorld);
+        List<Location> usedSpawns = new ArrayList<>();
         for (Player player : players) {
-            player.teleport(randomSpawn(gameWorld, spreadRadius, player));
+            Location spawn = randomSpawn(gameWorld, spawnCenter, spreadRadius, player, usedSpawns);
+            usedSpawns.add(spawn);
+            player.teleport(spawn);
         }
     }
 
-    private Location randomSpawn(World world, int spreadRadius, Player player) {
-        // Avoid watchdog stalls: only probe already-loaded chunks while selecting random spawns.
-        final int maxAttempts = 48;
+    private void ensurePreparedGameWorldAsync() {
+        if (preparedGameWorldName != null) {
+            return;
+        }
+
+        if (!preparingWorld.compareAndSet(false, true)) {
+            return;
+        }
+
+        String targetWorldName = buildGeneratedWorldName();
+        long seed = random.nextLong();
+
+        CompletableFuture
+                .completedFuture(null)
+                .thenCompose(ignored -> createAndWarmupWorldOnMainThread(targetWorldName, seed))
+                .whenComplete((ignored, throwable) -> {
+                    if (throwable != null) {
+                        Throwable cause = throwable.getCause() == null ? throwable : throwable.getCause();
+                        plugin.getLogger().warning("[地图预生成] 预生成失败: " + cause.getMessage());
+                        cleanupGeneratedWorldAsync(targetWorldName);
+                    } else {
+                        preparedGameWorldName = targetWorldName;
+                        plugin.getLogger().info("[地图预生成] 下一局地图已准备完成: " + targetWorldName + "，seed=" + seed);
+                    }
+                    preparingWorld.set(false);
+                });
+    }
+
+    private CompletableFuture<Void> createAndWarmupWorldOnMainThread(String worldName, long seed) {
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            try {
+                WorldCreator creator = WorldCreator.name(worldName);
+                creator.seed(seed);
+                World world = Bukkit.createWorld(creator);
+                if (world == null) {
+                    future.completeExceptionally(new IllegalStateException("创建世界失败: " + worldName));
+                    return;
+                }
+
+                preloadSpawnChunks(world, Math.max(0, plugin.getConfig().getInt("game.preload-radius-chunks", 6)));
+                future.complete(null);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+        return future;
+    }
+
+    private void preloadSpawnChunks(World world, int radiusChunks) {
+        Location spawn = world.getSpawnLocation();
+        int centerChunkX = spawn.getBlockX() >> 4;
+        int centerChunkZ = spawn.getBlockZ() >> 4;
+        for (int dx = -radiusChunks; dx <= radiusChunks; dx++) {
+            for (int dz = -radiusChunks; dz <= radiusChunks; dz++) {
+                world.getChunkAt(centerChunkX + dx, centerChunkZ + dz);
+            }
+        }
+    }
+
+    private void cleanupGeneratedWorldAsync(String worldName) {
+        if (worldName == null || worldName.isBlank() || !isGeneratedWorldName(worldName)) {
+            return;
+        }
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            World loaded = Bukkit.getWorld(worldName);
+            if (loaded != null) {
+                Location lobby = getLobbyLocation();
+                for (Player online : Bukkit.getOnlinePlayers()) {
+                    if (online.getWorld().equals(loaded) && lobby != null) {
+                        online.teleport(lobby);
+                    }
+                }
+
+                if (!Bukkit.unloadWorld(loaded, false)) {
+                    plugin.getLogger().warning("[地图清理] 卸载世界失败: " + worldName);
+                    return;
+                }
+            }
+
+            CompletableFuture.runAsync(() -> {
+                try {
+                    deleteDirectory(new File(Bukkit.getWorldContainer(), worldName).toPath());
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }).exceptionally(throwable -> {
+                Throwable cause = throwable.getCause() == null ? throwable : throwable.getCause();
+                plugin.getLogger().warning("[地图清理] 删除世界目录失败: " + worldName + "，原因: " + cause.getMessage());
+                return null;
+            });
+        });
+    }
+
+    private String buildGeneratedWorldName() {
+        return getConfiguredBaseWorldName() + GENERATED_WORLD_INFIX + UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private String getConfiguredBaseWorldName() {
+        String worldName = plugin.getConfig().getString("game.world", "world");
+        return worldName == null || worldName.isBlank() ? "world" : worldName;
+    }
+
+    private boolean isGeneratedWorldName(String worldName) {
+        return worldName.contains(GENERATED_WORLD_INFIX);
+    }
+
+    private Location randomSpawn(World world, Location spawnCenter, int spreadRadius, Player player, List<Location> usedSpawns) {
+        final int maxAttempts = 64;
         for (int i = 0; i < maxAttempts; i++) {
-            int x = random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
-            int z = random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
+            int x = spawnCenter.getBlockX() + random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
+            int z = spawnCenter.getBlockZ() + random.nextInt(spreadRadius * 2 + 1) - spreadRadius;
             int chunkX = x >> 4;
             int chunkZ = z >> 4;
 
-            if (!world.isChunkLoaded(chunkX, chunkZ)) {
+            world.getChunkAt(chunkX, chunkZ);
+
+            int y = world.getHighestBlockYAt(x, z) + 1;
+            Location candidate = new Location(world, x + 0.5D, y, z + 0.5D);
+            if (isFarEnough(candidate, usedSpawns)) {
+                return candidate;
+            }
+        }
+
+        Location fallback = spawnCenter.clone();
+        int fallbackIndex = usedSpawns.size();
+        double angle = fallbackIndex * (Math.PI * 2.0D / 8.0D);
+        double distance = Math.max(MIN_SPAWN_DISTANCE_BLOCKS, spreadRadius / 3.0D);
+        int x = fallback.getBlockX() + (int) Math.round(Math.cos(angle) * distance);
+        int z = fallback.getBlockZ() + (int) Math.round(Math.sin(angle) * distance);
+        world.getChunkAt(x >> 4, z >> 4);
+        int y = world.getHighestBlockYAt(x, z) + 1;
+        plugin.getLogger().warning("[出生分散] 随机出生点不足，玩家 " + player.getName() + " 使用分散回退出生点。");
+        return new Location(world, x + 0.5D, y, z + 0.5D);
+    }
+
+    private boolean isFarEnough(Location candidate, List<Location> usedSpawns) {
+        for (Location usedSpawn : usedSpawns) {
+            if (!usedSpawn.getWorld().equals(candidate.getWorld())) {
                 continue;
             }
 
-            int y = world.getHighestBlockYAt(x, z) + 1;
-            return new Location(world, x + 0.5D, y, z + 0.5D);
+            if (usedSpawn.distanceSquared(candidate) < MIN_SPAWN_DISTANCE_SQUARED) {
+                return false;
+            }
         }
-
-        // Fallback to world spawn if no loaded candidate chunk is found.
-        Location fallback = world.getSpawnLocation().clone();
-        int y = world.getHighestBlockYAt(fallback) + 1;
-        fallback.setY(y);
-        plugin.getLogger().warning("[出生分散] 未找到已加载随机区块，玩家 " + player.getName() + " 回退到世界出生点。");
-        return fallback.add(0.5D, 0.0D, 0.5D);
+        return true;
     }
 
     private World resolveWorld(String worldName) {
@@ -218,6 +376,32 @@ public final class SpawnManager {
         return Bukkit.getWorlds().isEmpty() ? null : Bukkit.getWorlds().getFirst();
     }
 
+    private Location getSpawnCenter(World world) {
+        if (plugin.getConfig().getBoolean("world-border.use-world-spawn", true)) {
+            return world.getSpawnLocation();
+        }
+
+        double centerX = plugin.getConfig().getDouble("world-border.center-x", 0.0D);
+        double centerZ = plugin.getConfig().getDouble("world-border.center-z", 0.0D);
+        int y = world.getHighestBlockYAt((int) Math.floor(centerX), (int) Math.floor(centerZ)) + 1;
+        return new Location(world, centerX, y, centerZ);
+    }
+
+    private int resolveSpawnRadius(World world) {
+        int configuredRadius = Math.max(16, plugin.getConfig().getInt("game.spread-radius", 200));
+        if (!plugin.getConfig().getBoolean("world-border.enabled", false)) {
+            return configuredRadius;
+        }
+
+        double startSize = Math.max(16.0D, plugin.getConfig().getDouble("world-border.start-size", 2000.0D));
+        int borderSafeRadius = (int) Math.floor(startSize / 2.0D - BORDER_SPAWN_MARGIN_BLOCKS);
+        if (borderSafeRadius <= 16) {
+            return 16;
+        }
+
+        return Math.min(configuredRadius, borderSafeRadius);
+    }
+
     private void deleteDirectory(Path path) throws IOException {
         if (!Files.exists(path)) {
             return;
@@ -240,28 +424,4 @@ public final class SpawnManager {
         }
     }
 
-    private void copyDirectory(Path source, Path target) throws IOException {
-        try (var walk = Files.walk(source)) {
-            walk.forEach(sourcePath -> {
-                try {
-                    Path relative = source.relativize(sourcePath);
-                    Path targetPath = target.resolve(relative);
-
-                    if (Files.isDirectory(sourcePath)) {
-                        Files.createDirectories(targetPath);
-                    } else {
-                        Files.createDirectories(targetPath.getParent());
-                        Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
-                    }
-                } catch (IOException e) {
-                    throw new RuntimeException(e);
-                }
-            });
-        } catch (RuntimeException e) {
-            if (e.getCause() instanceof IOException io) {
-                throw io;
-            }
-            throw e;
-        }
-    }
 }

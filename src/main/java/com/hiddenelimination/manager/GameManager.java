@@ -175,14 +175,9 @@ public final class GameManager {
             return false;
         }
 
-        World gameWorld = spawnManager.getGameWorld();
+        World gameWorld = spawnManager.acquireGameWorldForRound();
         if (gameWorld == null) {
-            uiManager.error(starter, "游戏世界不存在，请检查 config.yml 的 game.world。");
-            return false;
-        }
-
-        if (!spawnManager.resetGameWorldFromTemplateIfEnabled()) {
-            uiManager.error(starter, "地图重置失败，请检查模板世界配置。");
+            uiManager.error(starter, "游戏地图尚未准备完成，请稍后再试。当前状态：" + spawnManager.getPreparedGameWorldStatus());
             return false;
         }
 
@@ -437,6 +432,7 @@ public final class GameManager {
             eliminationOrder.clear();
             survivalBonusMillisByPlayer.clear();
             gameState = GameState.WAITING;
+            spawnManager.onRoundFinished();
         };
         if (cleanupDelaySeconds > 0L) {
             plugin.getServer().getScheduler().runTaskLater(plugin, cleanupAction, cleanupDelaySeconds * 20L);

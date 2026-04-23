@@ -16,10 +16,11 @@ game:
   # 0 表示不限时
   round-duration-seconds: 0
 
-  # 每局开始前是否重置游戏地图（从模板复制）
+  # 每局使用预生成的全新原版随机世界；启动时先准备第一张，开局后后台继续准备下一张
   reset-world-each-round: true
-  # 模板世界目录名（服务器根目录下）
-  world-template: he_game_template
+  # 仅用作自动生成世界的前缀名，不需要提前准备任何对局地图目录
+  # 预热出生点附近区块半径，越大开局越流畅，但后台准备越久
+  preload-radius-chunks: 6
 
   # 每局开局是否重置时间与天气
   reset-time-each-round: true
@@ -88,15 +89,9 @@ powerups:
 
   ore-exchange-points:
     coal: 1
-    redstone: 1
-    lapis_lazuli: 2
-    quartz: 2
-    raw_copper: 2
-    raw_iron: 3
-    raw_gold: 4
-    diamond: 8
-    emerald: 10
-    ancient_debris: 18
+    iron_ingot: 2
+    gold_ingot: 3
+    diamond: 4
 
 result-scoring:
   placement-weight: 10

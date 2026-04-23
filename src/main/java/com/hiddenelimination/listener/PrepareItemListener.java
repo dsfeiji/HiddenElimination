@@ -63,21 +63,23 @@ public final class PrepareItemListener implements Listener {
             return;
         }
 
-        Player player = event.getPlayer();
-
-        // 短时间内重复触发直接拦截
-        if (isDebounced(player.getUniqueId())) {
-            denyDefaultUse(event);
-            return;
-        }
-
         if (item.getType() == Material.GREEN_DYE) {
+            Player player = event.getPlayer();
+            if (isDebounced(player.getUniqueId())) {
+                denyDefaultUse(event);
+                return;
+            }
             denyDefaultUse(event);
             toggleReady(player);
             return;
         }
 
         if (item.getType() == Material.NETHER_STAR) {
+            Player player = event.getPlayer();
+            if (isDebounced(player.getUniqueId())) {
+                denyDefaultUse(event);
+                return;
+            }
             denyDefaultUse(event);
             tryStartGame(player);
         }

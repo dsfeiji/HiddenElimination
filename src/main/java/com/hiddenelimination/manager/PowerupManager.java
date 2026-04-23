@@ -232,6 +232,10 @@ public final class PowerupManager {
 
         pendingFakeBroadcastCount--;
         ConditionType fake = randomConditionExcluding(realCondition);
+        if (fake == null) {
+            return;
+        }
+
         if (conditionManager != null) {
             conditionManager.revealFakeCondition(fake);
         } else {
@@ -977,9 +981,28 @@ public final class PowerupManager {
 
     private ConditionType randomConditionExcluding(ConditionType excluded) {
         List<ConditionType> pool = new ArrayList<>(List.of(ConditionType.values()));
-        pool.remove(excluded);
+        Set<ConditionType> unavailable = new LinkedHashSet<>();
+        unavailable.add(excluded);
+
+        if (gameManager != null) {
+            for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
+                PlayerGameData data = playerDataManager.get(playerId);
+                if (data == null || data.getAssignedCondition() == null) {
+                    continue;
+                }
+                unavailable.add(data.getAssignedCondition());
+            }
+        }
+
+        if (conditionManager != null) {
+            for (ConditionManager.RevealedCondition revealed : conditionManager.getRevealedConditionsSnapshot()) {
+                unavailable.add(revealed.conditionType());
+            }
+        }
+
+        pool.removeIf(unavailable::contains);
         if (pool.isEmpty()) {
-            return excluded;
+            return null;
         }
         return pool.get(random.nextInt(pool.size()));
     }
@@ -1031,15 +1054,9 @@ public final class PowerupManager {
     private enum OreExchange {
         ALL("全部矿物", "all", 0, Material.EXPERIENCE_BOTTLE, Material.EXPERIENCE_BOTTLE),
         COAL("煤炭", "coal", 1, Material.COAL, Material.COAL),
-        REDSTONE("红石", "redstone", 1, Material.REDSTONE, Material.REDSTONE),
-        LAPIS("青金石", "lapis_lazuli", 2, Material.LAPIS_LAZULI, Material.LAPIS_LAZULI),
-        QUARTZ("下界石英", "quartz", 2, Material.QUARTZ, Material.QUARTZ),
-        RAW_COPPER("粗铜", "raw_copper", 2, Material.RAW_COPPER, Material.RAW_COPPER),
-        RAW_IRON("粗铁", "raw_iron", 3, Material.RAW_IRON, Material.RAW_IRON),
-        RAW_GOLD("粗金", "raw_gold", 4, Material.RAW_GOLD, Material.RAW_GOLD),
-        DIAMOND("钻石", "diamond", 8, Material.DIAMOND, Material.DIAMOND),
-        EMERALD("绿宝石", "emerald", 10, Material.EMERALD, Material.EMERALD),
-        ANCIENT_DEBRIS("远古残骸", "ancient_debris", 18, Material.ANCIENT_DEBRIS, Material.ANCIENT_DEBRIS);
+        IRON_INGOT("铁锭", "iron_ingot", 2, Material.IRON_INGOT, Material.IRON_INGOT),
+        GOLD_INGOT("金锭", "gold_ingot", 3, Material.GOLD_INGOT, Material.GOLD_INGOT),
+        DIAMOND("钻石", "diamond", 4, Material.DIAMOND, Material.DIAMOND);
 
         private final String displayName;
         private final String configKey;

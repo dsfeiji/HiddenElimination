@@ -60,7 +60,9 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         registerCommand();
         registerListeners();
 
+        spawnManager.initializePreparedGameWorldAsync();
         uiManager.startUiLoop();
+        getServer().getScheduler().runTaskTimer(this, spawnManager::enforceLobbyEnvironment, 0L, 200L);
         getLogger().info("HiddenElimination 已启用");
     }
 
