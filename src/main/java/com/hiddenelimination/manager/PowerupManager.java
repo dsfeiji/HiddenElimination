@@ -9,7 +9,9 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.entity.EntityType;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.TNTPrimed;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
@@ -914,6 +916,7 @@ public final class PowerupManager {
             case SWAP_RANDOM_PLAYER -> useSwapRandomPlayer(player);
             case MINERAL_LOOTBOX -> useMineralLootbox(player);
             case PARDON_TASK_PENALTY -> useTaskPenaltyPardon(player);
+            case READ_PHD -> useReadPhd(player, price);
         };
         if (!used) {
             return;
@@ -998,6 +1001,209 @@ public final class PowerupManager {
         }
         uiManager.info(player, "已获得本次任务失败惩罚赦免。");
         return true;
+    }
+
+    private boolean useReadPhd(Player player, int price) {
+        int goodWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.probability.good", 75));
+        int badWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.probability.bad", 25));
+        if (pickByWeight(goodWeight, badWeight) == 0) {
+            return applyReadPhdGoodEffect(player, price);
+        }
+        return applyReadPhdBadEffect(player);
+    }
+
+    private boolean applyReadPhdGoodEffect(Player player, int price) {
+        int armorWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.good-effects.armor", 40));
+        int ruleTokenWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.good-effects.rule-token", 30));
+        int pointsWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.good-effects.points", 30));
+        int goodChoice = pickByWeight(armorWeight, ruleTokenWeight, pointsWeight);
+
+        if (goodChoice == 0) {
+            if (giveRandomArmorForEmptySlot(player)) {
+                uiManager.success(player, "读博结果：欧皇附体，补全了一件护甲。");
+                return true;
+            }
+            // 若没有空护甲位，回退到积分奖励
+        }
+        if (goodChoice == 1) {
+            choiceTokens.merge(player.getUniqueId(), 1, Integer::sum);
+            uiManager.success(player, "读博结果：获得 1 次规则类道具使用权。");
+            return true;
+        }
+
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        if (data == null) {
+            return false;
+        }
+        int gain = Math.max(1, (int) Math.round(price * (0.5 + random.nextDouble())));
+        data.addTaskPoints(gain);
+        uiManager.success(player, "读博结果：获得 +" + gain + " 积分。");
+        return true;
+    }
+
+    private boolean applyReadPhdBadEffect(Player player) {
+        int losePointsWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.bad-effects.lose-points", 25));
+        int summonMobWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.bad-effects.summon-mob", 25));
+        int tntWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.bad-effects.tnt", 25));
+        int loseItemWeight = Math.max(0, plugin.getConfig().getInt("powerups.read-phd.bad-effects.lose-item", 25));
+        int roll = pickByWeight(losePointsWeight, summonMobWeight, tntWeight, loseItemWeight);
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        switch (roll) {
+            case 0 -> {
+                if (data == null) {
+                    return false;
+                }
+                int lose = 5 + random.nextInt(6);
+                data.deductTaskPoints(lose);
+                uiManager.warn(player, "读博翻车：失去 " + lose + " 积分。");
+                return true;
+            }
+            case 1 -> {
+                EntityType[] mobs = new EntityType[]{EntityType.SILVERFISH, EntityType.ZOMBIE, EntityType.SKELETON, EntityType.CREEPER};
+                EntityType chosen = mobs[random.nextInt(mobs.length)];
+                player.getWorld().spawnEntity(player.getLocation(), chosen);
+                uiManager.warn(player, "读博翻车：你身边出现了 " + chosen.name() + "！");
+                return true;
+            }
+            case 2 -> {
+                TNTPrimed tnt = (TNTPrimed) player.getWorld().spawnEntity(player.getLocation(), EntityType.TNT);
+                tnt.setFuseTicks(60);
+                uiManager.warn(player, "读博翻车：脚下出现了点燃的 TNT！");
+                return true;
+            }
+            default -> {
+                if (removeRandomArmorOrHotbarItem(player)) {
+                    uiManager.warn(player, "读博翻车：你随机失去了一件护甲或一格快捷栏物品。");
+                } else {
+                    uiManager.warn(player, "读博翻车：但你没有可失去的装备或快捷栏物品。");
+                }
+                return true;
+            }
+        }
+    }
+
+    private int pickByWeight(int... weights) {
+        int total = 0;
+        for (int weight : weights) {
+            total += Math.max(0, weight);
+        }
+        if (total <= 0) {
+            return 0;
+        }
+        int roll = random.nextInt(total);
+        int cumulative = 0;
+        for (int i = 0; i < weights.length; i++) {
+            cumulative += Math.max(0, weights[i]);
+            if (roll < cumulative) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private boolean giveRandomArmorForEmptySlot(Player player) {
+        PlayerInventory inv = player.getInventory();
+        List<Integer> emptySlots = new ArrayList<>();
+        if (inv.getHelmet() == null || inv.getHelmet().getType() == Material.AIR) {
+            emptySlots.add(0);
+        }
+        if (inv.getChestplate() == null || inv.getChestplate().getType() == Material.AIR) {
+            emptySlots.add(1);
+        }
+        if (inv.getLeggings() == null || inv.getLeggings().getType() == Material.AIR) {
+            emptySlots.add(2);
+        }
+        if (inv.getBoots() == null || inv.getBoots().getType() == Material.AIR) {
+            emptySlots.add(3);
+        }
+        if (emptySlots.isEmpty()) {
+            return false;
+        }
+        int slotType = emptySlots.get(random.nextInt(emptySlots.size()));
+        int tier = random.nextInt(5); // 0: leather, 1: chain, 2: golden, 3: iron, 4: diamond
+        Material armor = resolveArmorMaterial(slotType, tier);
+        ItemStack item = new ItemStack(armor);
+        switch (slotType) {
+            case 0 -> inv.setHelmet(item);
+            case 1 -> inv.setChestplate(item);
+            case 2 -> inv.setLeggings(item);
+            case 3 -> inv.setBoots(item);
+            default -> {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Material resolveArmorMaterial(int slotType, int tier) {
+        return switch (slotType) {
+            case 0 -> switch (tier) {
+                case 0 -> Material.LEATHER_HELMET;
+                case 1 -> Material.CHAINMAIL_HELMET;
+                case 2 -> Material.GOLDEN_HELMET;
+                case 3 -> Material.IRON_HELMET;
+                default -> Material.DIAMOND_HELMET;
+            };
+            case 1 -> switch (tier) {
+                case 0 -> Material.LEATHER_CHESTPLATE;
+                case 1 -> Material.CHAINMAIL_CHESTPLATE;
+                case 2 -> Material.GOLDEN_CHESTPLATE;
+                case 3 -> Material.IRON_CHESTPLATE;
+                default -> Material.DIAMOND_CHESTPLATE;
+            };
+            case 2 -> switch (tier) {
+                case 0 -> Material.LEATHER_LEGGINGS;
+                case 1 -> Material.CHAINMAIL_LEGGINGS;
+                case 2 -> Material.GOLDEN_LEGGINGS;
+                case 3 -> Material.IRON_LEGGINGS;
+                default -> Material.DIAMOND_LEGGINGS;
+            };
+            default -> switch (tier) {
+                case 0 -> Material.LEATHER_BOOTS;
+                case 1 -> Material.CHAINMAIL_BOOTS;
+                case 2 -> Material.GOLDEN_BOOTS;
+                case 3 -> Material.IRON_BOOTS;
+                default -> Material.DIAMOND_BOOTS;
+            };
+        };
+    }
+
+    private boolean removeRandomArmorOrHotbarItem(Player player) {
+        PlayerInventory inv = player.getInventory();
+        List<Runnable> removals = new ArrayList<>();
+        if (inv.getHelmet() != null && inv.getHelmet().getType() != Material.AIR) {
+            removals.add(() -> inv.setHelmet(null));
+        }
+        if (inv.getChestplate() != null && inv.getChestplate().getType() != Material.AIR) {
+            removals.add(() -> inv.setChestplate(null));
+        }
+        if (inv.getLeggings() != null && inv.getLeggings().getType() != Material.AIR) {
+            removals.add(() -> inv.setLeggings(null));
+        }
+        if (inv.getBoots() != null && inv.getBoots().getType() != Material.AIR) {
+            removals.add(() -> inv.setBoots(null));
+        }
+        for (int i = 0; i <= 8; i++) {
+            ItemStack slot = inv.getItem(i);
+            int index = i;
+            if (slot != null && slot.getType() != Material.AIR && !isPowerupCompass(slot)) {
+                removals.add(() -> inv.setItem(index, null));
+            }
+        }
+        if (removals.isEmpty()) {
+            return false;
+        }
+        removals.get(random.nextInt(removals.size())).run();
+        return true;
+    }
+
+    private boolean isPowerupCompass(ItemStack item) {
+        if (item == null || item.getType() != Material.COMPASS || !item.hasItemMeta()) {
+            return false;
+        }
+        ItemMeta meta = item.getItemMeta();
+        Byte marker = meta.getPersistentDataContainer().get(compassKey, PersistentDataType.BYTE);
+        return marker != null && marker == (byte) 1;
     }
 
     private void tryExchangeOre(Player player, OreExchange oreExchange) {
@@ -1303,7 +1509,8 @@ public final class PowerupManager {
         HIGHLIGHT_ALL_PLAYERS("高亮所有玩家", "highlight_all_players", 12, Material.SPECTRAL_ARROW, "使所有存活玩家发光一段时间"),
         SWAP_RANDOM_PLAYER("随机互换位置", "swap_random_player", 10, Material.ENDER_PEARL, "与随机一名存活玩家互换位置"),
         MINERAL_LOOTBOX("矿物盲盒", "mineral_lootbox", 8, Material.CHEST, "随机获得若干矿物资源"),
-        PARDON_TASK_PENALTY("赦免任务惩罚", "pardon_task_penalty", 9, Material.TOTEM_OF_UNDYING, "免除本次任务失败惩罚一次");
+        PARDON_TASK_PENALTY("赦免任务惩罚", "pardon_task_penalty", 9, Material.TOTEM_OF_UNDYING, "免除本次任务失败惩罚一次"),
+        READ_PHD("读博", "read_phd", 10, Material.ENCHANTED_BOOK, "75%正面效果，25%负面效果的随机事件");
 
         private final String displayName;
         private final String configKey;

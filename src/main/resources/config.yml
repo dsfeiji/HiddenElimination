@@ -95,6 +95,21 @@ powerups:
     swap_random_player: 15
     mineral_lootbox: 10
     pardon_task_penalty: 15
+    read_phd: 10
+
+  read-phd:
+    probability:
+      good: 75
+      bad: 25
+    good-effects:
+      armor: 40
+      rule-token: 30
+      points: 30
+    bad-effects:
+      lose-points: 25
+      summon-mob: 25
+      tnt: 25
+      lose-item: 25
 
   ore-exchange-points:
     coal: 1
