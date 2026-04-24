@@ -19,6 +19,7 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 出生点和大厅传送管理。
@@ -243,8 +244,7 @@ public final class SpawnManager {
                     return;
                 }
 
-                preloadSpawnChunks(world, Math.max(0, plugin.getConfig().getInt("game.preload-radius-chunks", 6)));
-                future.complete(null);
+                preloadSpawnChunksAsync(world, Math.max(0, plugin.getConfig().getInt("game.preload-radius-chunks", 6)), future);
             } catch (Exception e) {
                 future.completeExceptionally(e);
             }
@@ -252,15 +252,53 @@ public final class SpawnManager {
         return future;
     }
 
-    private void preloadSpawnChunks(World world, int radiusChunks) {
+    private void preloadSpawnChunksAsync(World world, int radiusChunks, CompletableFuture<Void> completeFuture) {
+        if (radiusChunks <= 0) {
+            completeFuture.complete(null);
+            return;
+        }
+
         Location spawn = world.getSpawnLocation();
         int centerChunkX = spawn.getBlockX() >> 4;
         int centerChunkZ = spawn.getBlockZ() >> 4;
+        List<int[]> chunks = new ArrayList<>();
         for (int dx = -radiusChunks; dx <= radiusChunks; dx++) {
             for (int dz = -radiusChunks; dz <= radiusChunks; dz++) {
-                world.getChunkAt(centerChunkX + dx, centerChunkZ + dz);
+                chunks.add(new int[]{centerChunkX + dx, centerChunkZ + dz});
             }
         }
+
+        int batchSize = Math.max(1, plugin.getConfig().getInt("game.preload-batch-size", 2));
+        long intervalTicks = Math.max(1L, plugin.getConfig().getLong("game.preload-batch-interval-ticks", 1L));
+        AtomicInteger index = new AtomicInteger(0);
+        AtomicInteger pending = new AtomicInteger(0);
+
+        int taskId = plugin.getServer().getScheduler().scheduleSyncRepeatingTask(plugin, () -> {
+            if (completeFuture.isDone()) {
+                return;
+            }
+
+            for (int i = 0; i < batchSize; i++) {
+                int current = index.getAndIncrement();
+                if (current >= chunks.size()) {
+                    break;
+                }
+                int[] chunk = chunks.get(current);
+                pending.incrementAndGet();
+                world.getChunkAtAsync(chunk[0], chunk[1], true).whenComplete((loaded, throwable) -> {
+                    if (throwable != null) {
+                        completeFuture.completeExceptionally(throwable);
+                        return;
+                    }
+                    int left = pending.decrementAndGet();
+                    if (index.get() >= chunks.size() && left <= 0) {
+                        completeFuture.complete(null);
+                    }
+                });
+            }
+        }, 0L, intervalTicks);
+
+        completeFuture.whenComplete((ok, throwable) -> plugin.getServer().getScheduler().cancelTask(taskId));
     }
 
     private void cleanupGeneratedWorldAsync(String worldName) {

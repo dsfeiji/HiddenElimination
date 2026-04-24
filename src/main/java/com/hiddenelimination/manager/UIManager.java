@@ -31,6 +31,8 @@ public final class UIManager {
     private TaskManager taskManager;
 
     private BukkitTask uiTask;
+    private static final int RULES_PAGE_SIZE = 4;
+    private static final long RULES_ROTATE_INTERVAL_MS = 4000L;
 
     public UIManager(HiddenEliminationPlugin plugin) {
         this.plugin = plugin;
@@ -233,13 +235,19 @@ public final class UIManager {
         if (reveals.isEmpty()) {
             lines.add(ChatColor.GRAY + "暂无");
         } else {
-            int start = Math.max(0, reveals.size() - 4);
-            for (int i = start; i < reveals.size(); i++) {
+            int start = resolveRuleWindowStart(reveals.size());
+            int end = Math.min(reveals.size(), start + RULES_PAGE_SIZE);
+            for (int i = start; i < end; i++) {
                 ConditionManager.RevealedCondition rc = reveals.get(i);
                 boolean triggered = conditionManager.getTriggeredConditionsSnapshot().contains(rc.conditionType());
                 String status = triggered ? "已触发" : "未触发";
                 ChatColor base = triggered ? ChatColor.GRAY : ChatColor.GREEN;
                 lines.add(base + "- " + rc.conditionType().getDisplayName() + " [" + status + "]");
+            }
+            if (reveals.size() > RULES_PAGE_SIZE) {
+                int page = (start / RULES_PAGE_SIZE) + 1;
+                int totalPage = (reveals.size() + RULES_PAGE_SIZE - 1) / RULES_PAGE_SIZE;
+                lines.add(ChatColor.DARK_GRAY + "第 " + page + "/" + totalPage + " 页");
             }
         }
 
@@ -285,5 +293,18 @@ public final class UIManager {
         long minutes = Math.max(0L, totalSeconds) / 60;
         long seconds = Math.max(0L, totalSeconds) % 60;
         return String.format("%02d:%02d", minutes, seconds);
+    }
+
+    private int resolveRuleWindowStart(int revealedCount) {
+        if (revealedCount <= RULES_PAGE_SIZE) {
+            return 0;
+        }
+        int totalPages = (revealedCount + RULES_PAGE_SIZE - 1) / RULES_PAGE_SIZE;
+        long index = (System.currentTimeMillis() / RULES_ROTATE_INTERVAL_MS) % totalPages;
+        int start = (int) (index * RULES_PAGE_SIZE);
+        if (start >= revealedCount) {
+            return Math.max(0, revealedCount - RULES_PAGE_SIZE);
+        }
+        return start;
     }
 }

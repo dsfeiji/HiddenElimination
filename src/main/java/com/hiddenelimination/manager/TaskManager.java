@@ -92,6 +92,7 @@ public final class TaskManager {
 
     private final Map<UUID, Integer> progressByPlayer = new ConcurrentHashMap<>();
     private final List<UUID> completionOrder = new ArrayList<>();
+    private final Set<UUID> penaltyPardonPlayers = ConcurrentHashMap.newKeySet();
 
     private GameManager gameManager;
     private PowerupManager powerupManager;
@@ -160,6 +161,7 @@ public final class TaskManager {
         currentTask = null;
         progressByPlayer.clear();
         completionOrder.clear();
+        penaltyPardonPlayers.clear();
         roundStartEpochSecond = 0L;
         nextTaskPublishEpochSecond = 0L;
         taskDeadlineEpochSecond = 0L;
@@ -215,6 +217,22 @@ public final class TaskManager {
         }
 
         markProgress(killer, TaskType.KILL_PLAYER);
+        PlayerGameData data = playerDataManager.get(killer.getUniqueId());
+        if (data != null && !data.isEliminated()) {
+            data.addTaskPoints(10);
+            uiManager.success(killer, "[任务] 击杀奖励：+10 积分");
+        }
+    }
+
+    public boolean grantPenaltyPardon(UUID playerId) {
+        if (playerId == null || !isEnabled() || gameManager == null || !gameManager.isRunning()) {
+            return false;
+        }
+        if (!gameManager.isActivePlayer(playerId)) {
+            return false;
+        }
+        penaltyPardonPlayers.add(playerId);
+        return true;
     }
 
     public void handlePlayerDeath(Player player) {
@@ -329,9 +347,15 @@ public final class TaskManager {
         if (!isEnabled()) {
             return;
         }
+        if (player.getGameMode() == org.bukkit.GameMode.SPECTATOR || player.getGameMode() == org.bukkit.GameMode.CREATIVE) {
+            return;
+        }
 
         for (Entity entity : player.getNearbyEntities(0.6D, 1.0D, 0.6D)) {
-            if (entity instanceof Player other && !other.getUniqueId().equals(player.getUniqueId())) {
+            if (entity instanceof Player other
+                    && !other.getUniqueId().equals(player.getUniqueId())
+                    && other.getGameMode() != org.bukkit.GameMode.SPECTATOR
+                    && other.getGameMode() != org.bukkit.GameMode.CREATIVE) {
                 markProgress(player, TaskType.TOUCH_PLAYER);
                 return;
             }
@@ -489,6 +513,11 @@ public final class TaskManager {
                 continue;
             }
 
+            if (penaltyPardonPlayers.remove(playerId)) {
+                uiManager.success(player, "[任务] 赦免生效：本次任务失败惩罚已免除。");
+                continue;
+            }
+
             data.deductTaskPoints(penalty);
             int leftLives = data.consumeTaskLife();
             lifeLostPlayers++;
@@ -566,6 +595,7 @@ public final class TaskManager {
         currentTask = null;
         progressByPlayer.clear();
         completionOrder.clear();
+        penaltyPardonPlayers.clear();
         taskDeadlineEpochSecond = 0L;
     }
 

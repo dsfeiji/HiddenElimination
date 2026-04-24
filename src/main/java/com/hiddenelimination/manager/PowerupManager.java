@@ -5,6 +5,7 @@ import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
@@ -18,8 +19,11 @@ import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.CompassMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -34,12 +38,14 @@ public final class PowerupManager {
     private static final String RULE_TOOL_MENU_TITLE = ChatColor.YELLOW + "规则道具";
     private static final String PROBE_MENU_TITLE = ChatColor.YELLOW + "规则试探";
     private static final String ARMOR_MENU_TITLE = ChatColor.GREEN + "积分兑换装备强化";
+    private static final String POINT_ITEM_MENU_TITLE = ChatColor.LIGHT_PURPLE + "积分兑换道具";
     private static final String ORE_MENU_TITLE = ChatColor.AQUA + "矿物兑换积分";
     private static final int MENU_SIZE = 27;
 
     private static final int SLOT_RULE_TOOL = 10;
     private static final int SLOT_ARMOR_SET = 12;
-    private static final int SLOT_ORE_EXCHANGE = 14;
+    private static final int SLOT_POINT_ITEMS = 14;
+    private static final int SLOT_ORE_EXCHANGE = 16;
     private static final int SLOT_RULE_SHIELD = 13;
     private static final int SLOT_FAKE_BROADCAST = 16;
     private static final int SLOT_INFO = 22;
@@ -61,6 +67,7 @@ public final class PowerupManager {
     private final NamespacedKey compassKey;
     private final NamespacedKey probeConditionKey;
     private final NamespacedKey armorSetKey;
+    private final NamespacedKey pointItemKey;
     private final NamespacedKey oreExchangeKey;
 
     private final Map<UUID, Integer> choiceTokens = new ConcurrentHashMap<>();
@@ -73,6 +80,7 @@ public final class PowerupManager {
 
     private GameManager gameManager;
     private ConditionManager conditionManager;
+    private TaskManager taskManager;
     private int pendingFakeBroadcastCount;
 
     public PowerupManager(HiddenEliminationPlugin plugin, PlayerDataManager playerDataManager, UIManager uiManager) {
@@ -82,6 +90,7 @@ public final class PowerupManager {
         this.compassKey = new NamespacedKey(plugin, "powerup_compass");
         this.probeConditionKey = new NamespacedKey(plugin, "probe_condition");
         this.armorSetKey = new NamespacedKey(plugin, "armor_set");
+        this.pointItemKey = new NamespacedKey(plugin, "point_item");
         this.oreExchangeKey = new NamespacedKey(plugin, "ore_exchange");
     }
 
@@ -91,6 +100,10 @@ public final class PowerupManager {
 
     public void bindConditionManager(ConditionManager conditionManager) {
         this.conditionManager = conditionManager;
+    }
+
+    public void bindTaskManager(TaskManager taskManager) {
+        this.taskManager = taskManager;
     }
 
     public void startRound() {
@@ -180,6 +193,9 @@ public final class PowerupManager {
         if (ARMOR_MENU_TITLE.equals(title)) {
             return handleArmorMenuClick(event);
         }
+        if (POINT_ITEM_MENU_TITLE.equals(title)) {
+            return handlePointItemMenuClick(event);
+        }
         if (ORE_MENU_TITLE.equals(title)) {
             return handleOreMenuClick(event);
         }
@@ -197,6 +213,7 @@ public final class PowerupManager {
                 && !RULE_TOOL_MENU_TITLE.equals(title)
                 && !PROBE_MENU_TITLE.equals(title)
                 && !ARMOR_MENU_TITLE.equals(title)
+                && !POINT_ITEM_MENU_TITLE.equals(title)
                 && !ORE_MENU_TITLE.equals(title)) {
             return false;
         }
@@ -258,6 +275,7 @@ public final class PowerupManager {
         switch (slot) {
             case SLOT_RULE_TOOL -> openRuleToolMenu(player);
             case SLOT_ARMOR_SET -> openArmorSetMenu(player);
+            case SLOT_POINT_ITEMS -> openPointItemMenu(player);
             case SLOT_ORE_EXCHANGE -> openOreExchangeMenu(player);
             default -> {
                 return true;
@@ -390,6 +408,32 @@ public final class PowerupManager {
         return true;
     }
 
+    private boolean handlePointItemMenuClick(InventoryClickEvent event) {
+        event.setCancelled(true);
+
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return true;
+        }
+        if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) {
+            return true;
+        }
+
+        int slot = event.getRawSlot();
+        if (slot == SLOT_BACK) {
+            openExchangeMenu(player);
+            return true;
+        }
+
+        ItemStack clicked = event.getCurrentItem();
+        PointItem pointItem = extractPointItem(clicked);
+        if (pointItem == null) {
+            return true;
+        }
+        tryUsePointItem(player, pointItem);
+        openPointItemMenu(player);
+        return true;
+    }
+
     private void openExchangeMenu(Player player) {
         Inventory menu = Bukkit.createInventory(player, MENU_SIZE, MENU_TITLE);
         int taskPoints = getPlayerTaskPoints(player.getUniqueId());
@@ -414,6 +458,16 @@ public final class PowerupManager {
                 )
         ));
 
+        menu.setItem(SLOT_POINT_ITEMS, createMenuItem(
+                Material.ENDER_EYE,
+                ChatColor.LIGHT_PURPLE + "积分兑换道具",
+                List.of(
+                        ChatColor.GRAY + "使用积分兑换功能型道具",
+                        ChatColor.GRAY + "当前积分：" + ChatColor.LIGHT_PURPLE + taskPoints,
+                        ChatColor.DARK_GRAY + "点击进入道具兑换"
+                )
+        ));
+
         menu.setItem(SLOT_ORE_EXCHANGE, createMenuItem(
                 Material.EMERALD,
                 ChatColor.AQUA + "矿物兑换积分",
@@ -435,6 +489,32 @@ public final class PowerupManager {
                 )
         ));
 
+        player.openInventory(menu);
+    }
+
+    private void openPointItemMenu(Player player) {
+        Inventory menu = Bukkit.createInventory(player, MENU_SIZE, POINT_ITEM_MENU_TITLE);
+        int points = getPlayerTaskPoints(player.getUniqueId());
+        PointItem[] pointItems = PointItem.values();
+        for (int i = 0; i < pointItems.length && i < ARMOR_SELECT_SLOTS.length; i++) {
+            PointItem pointItem = pointItems[i];
+            menu.setItem(ARMOR_SELECT_SLOTS[i], createPointItem(pointItem, points));
+        }
+
+        menu.setItem(4, createMenuItem(
+                Material.EXPERIENCE_BOTTLE,
+                ChatColor.LIGHT_PURPLE + "当前积分：" + points,
+                List.of(
+                        ChatColor.GRAY + "道具效果立即生效",
+                        ChatColor.DARK_GRAY + "点击下方道具进行兑换"
+                )
+        ));
+
+        menu.setItem(SLOT_BACK, createMenuItem(
+                Material.ARROW,
+                ChatColor.YELLOW + "返回兑换菜单",
+                List.of(ChatColor.GRAY + "你的积分：" + ChatColor.LIGHT_PURPLE + points)
+        ));
         player.openInventory(menu);
     }
 
@@ -632,6 +712,26 @@ public final class PowerupManager {
         return item;
     }
 
+    private ItemStack createPointItem(PointItem pointItem, int currentPoints) {
+        int price = pointItem.price(plugin);
+        boolean affordable = currentPoints >= price;
+        ItemStack item = new ItemStack(pointItem.iconMaterial);
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return item;
+        }
+        meta.setDisplayName(ChatColor.LIGHT_PURPLE + pointItem.displayName);
+        meta.setLore(List.of(
+                ChatColor.GRAY + "价格：" + ChatColor.LIGHT_PURPLE + price + " 积分",
+                ChatColor.GRAY + pointItem.description,
+                affordable ? ChatColor.GREEN + "可兑换" : ChatColor.RED + "积分不足",
+                ChatColor.DARK_GRAY + "点击立即使用"
+        ));
+        meta.getPersistentDataContainer().set(pointItemKey, PersistentDataType.STRING, pointItem.name());
+        item.setItemMeta(meta);
+        return item;
+    }
+
     private ItemStack createOreExchangeItem(Player player, OreExchange oreExchange) {
         int unitPoints = oreExchange.points(plugin);
         int count = countMaterial(player.getInventory(), oreExchange.material);
@@ -721,6 +821,25 @@ public final class PowerupManager {
         }
     }
 
+    private PointItem extractPointItem(ItemStack item) {
+        if (item == null) {
+            return null;
+        }
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return null;
+        }
+        String key = meta.getPersistentDataContainer().get(pointItemKey, PersistentDataType.STRING);
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        try {
+            return PointItem.valueOf(key);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
     private List<ConditionType> getRevealedConditionOptions() {
         if (conditionManager == null) {
             return List.of();
@@ -776,6 +895,109 @@ public final class PowerupManager {
 
         pendingFakeBroadcastCount++;
         uiManager.success(player, "误导广播已准备，将在下一次规则公开时生效");
+    }
+
+    private void tryUsePointItem(Player player, PointItem pointItem) {
+        PlayerGameData data = playerDataManager.get(player.getUniqueId());
+        if (data == null || data.isEliminated()) {
+            uiManager.warn(player, "当前状态无法兑换该道具。");
+            return;
+        }
+        int price = pointItem.price(plugin);
+        if (data.getTaskPoints() < price) {
+            uiManager.warn(player, "积分不足，需要 " + price + " 积分。");
+            return;
+        }
+
+        boolean used = switch (pointItem) {
+            case HIGHLIGHT_ALL_PLAYERS -> useHighlightAllPlayers(player);
+            case SWAP_RANDOM_PLAYER -> useSwapRandomPlayer(player);
+            case MINERAL_LOOTBOX -> useMineralLootbox(player);
+            case PARDON_TASK_PENALTY -> useTaskPenaltyPardon(player);
+        };
+        if (!used) {
+            return;
+        }
+        data.deductTaskPoints(price);
+        uiManager.success(player, "道具已使用：" + pointItem.displayName + "，消耗 " + price + " 积分。");
+    }
+
+    private boolean useHighlightAllPlayers(Player player) {
+        if (gameManager == null) {
+            return false;
+        }
+        int durationSeconds = Math.max(3, plugin.getConfig().getInt("powerups.point-items.highlight-duration-seconds", 12));
+        for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
+            Player target = plugin.getServer().getPlayer(playerId);
+            if (target == null || !target.isOnline()) {
+                continue;
+            }
+            target.addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, durationSeconds * 20, 0, false, false, true));
+        }
+        uiManager.broadcast("[道具] " + player.getName() + " 使用了全员高亮（" + durationSeconds + "秒）。");
+        return true;
+    }
+
+    private boolean useSwapRandomPlayer(Player player) {
+        if (gameManager == null) {
+            return false;
+        }
+        List<Player> candidates = new ArrayList<>();
+        for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
+            if (playerId.equals(player.getUniqueId())) {
+                continue;
+            }
+            Player target = plugin.getServer().getPlayer(playerId);
+            if (target != null && target.isOnline()) {
+                candidates.add(target);
+            }
+        }
+        if (candidates.isEmpty()) {
+            uiManager.warn(player, "当前没有可互换位置的玩家。");
+            return false;
+        }
+        Collections.shuffle(candidates, random);
+        Player target = candidates.getFirst();
+        Location playerLoc = player.getLocation().clone();
+        Location targetLoc = target.getLocation().clone();
+        player.teleport(targetLoc);
+        target.teleport(playerLoc);
+        uiManager.broadcast("[道具] " + player.getName() + " 与 " + target.getName() + " 互换了位置！");
+        return true;
+    }
+
+    private boolean useMineralLootbox(Player player) {
+        PlayerInventory inventory = player.getInventory();
+        int picks = 1 + random.nextInt(2);
+        int totalGiven = 0;
+        for (int i = 0; i < picks; i++) {
+            MineralLoot loot = MineralLoot.values()[random.nextInt(MineralLoot.values().length)];
+            int amount = loot.minAmount + random.nextInt(loot.maxAmount - loot.minAmount + 1);
+            ItemStack stack = new ItemStack(loot.material, amount);
+            Map<Integer, ItemStack> remain = inventory.addItem(stack);
+            if (!remain.isEmpty()) {
+                for (ItemStack item : remain.values()) {
+                    player.getWorld().dropItemNaturally(player.getLocation(), item);
+                }
+            }
+            totalGiven += amount;
+        }
+        uiManager.info(player, "矿物盲盒开启成功，共获得 " + totalGiven + " 个矿物。");
+        return true;
+    }
+
+    private boolean useTaskPenaltyPardon(Player player) {
+        if (taskManager == null) {
+            uiManager.warn(player, "任务系统不可用，无法赦免。");
+            return false;
+        }
+        boolean granted = taskManager.grantPenaltyPardon(player.getUniqueId());
+        if (!granted) {
+            uiManager.warn(player, "当前无法使用赦免（请在对局进行中使用）。");
+            return false;
+        }
+        uiManager.info(player, "已获得本次任务失败惩罚赦免。");
+        return true;
     }
 
     private void tryExchangeOre(Player player, OreExchange oreExchange) {
@@ -1074,6 +1296,49 @@ public final class PowerupManager {
 
         private int points(HiddenEliminationPlugin plugin) {
             return Math.max(0, plugin.getConfig().getInt("powerups.ore-exchange-points." + configKey, defaultPoints));
+        }
+    }
+
+    private enum PointItem {
+        HIGHLIGHT_ALL_PLAYERS("高亮所有玩家", "highlight_all_players", 12, Material.SPECTRAL_ARROW, "使所有存活玩家发光一段时间"),
+        SWAP_RANDOM_PLAYER("随机互换位置", "swap_random_player", 10, Material.ENDER_PEARL, "与随机一名存活玩家互换位置"),
+        MINERAL_LOOTBOX("矿物盲盒", "mineral_lootbox", 8, Material.CHEST, "随机获得若干矿物资源"),
+        PARDON_TASK_PENALTY("赦免任务惩罚", "pardon_task_penalty", 9, Material.TOTEM_OF_UNDYING, "免除本次任务失败惩罚一次");
+
+        private final String displayName;
+        private final String configKey;
+        private final int defaultPrice;
+        private final Material iconMaterial;
+        private final String description;
+
+        PointItem(String displayName, String configKey, int defaultPrice, Material iconMaterial, String description) {
+            this.displayName = displayName;
+            this.configKey = configKey;
+            this.defaultPrice = defaultPrice;
+            this.iconMaterial = iconMaterial;
+            this.description = description;
+        }
+
+        private int price(HiddenEliminationPlugin plugin) {
+            return Math.max(0, plugin.getConfig().getInt("powerups.point-item-prices." + configKey, defaultPrice));
+        }
+    }
+
+    private enum MineralLoot {
+        AMETHYST_SHARD(Material.AMETHYST_SHARD, 6, 18),
+        RAW_COPPER(Material.RAW_COPPER, 5, 16),
+        RAW_GOLD(Material.RAW_GOLD, 1, 4),
+        REDSTONE(Material.REDSTONE, 8, 20),
+        LAPIS(Material.LAPIS_LAZULI, 6, 16);
+
+        private final Material material;
+        private final int minAmount;
+        private final int maxAmount;
+
+        MineralLoot(Material material, int minAmount, int maxAmount) {
+            this.material = material;
+            this.minAmount = minAmount;
+            this.maxAmount = maxAmount;
         }
     }
 

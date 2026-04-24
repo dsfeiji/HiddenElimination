@@ -177,8 +177,6 @@ public final class ConditionManager {
 
         long now = System.currentTimeMillis();
         if (data.getConditionActiveAtMillis() > now) {
-            long remain = Math.max(1L, (data.getConditionActiveAtMillis() - now + 999L) / 1000L);
-            uiManager.warn(player, "[规则] 你的公开规则将在 " + remain + " 秒后生效。");
             return false;
         }
 

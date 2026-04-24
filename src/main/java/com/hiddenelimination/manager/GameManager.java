@@ -12,6 +12,8 @@ import org.bukkit.World;
 import org.bukkit.WorldBorder;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Player;
+import org.bukkit.potion.PotionEffect;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
@@ -212,7 +214,12 @@ public final class GameManager {
             player.setSaturation(20.0F);
         }
 
-        spawnManager.spreadPlayersToGameWorld(readyPlayers);
+        Location sharedSpawn = createSharedRoundSpawn(gameWorld);
+        for (Player player : readyPlayers) {
+            player.teleport(sharedSpawn);
+            player.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 20 * 20, 0, false, false, true));
+            player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 20 * 20, 0, false, false, true));
+        }
         conditionManager.assignHiddenConditions(readyPlayers);
 
         gameState = GameState.RUNNING;
@@ -587,6 +594,11 @@ public final class GameManager {
             int clearSeconds = (int) Math.max(0L, plugin.getConfig().getLong("game.clear-weather-duration-seconds", 1200L));
             world.setClearWeatherDuration(clearSeconds * 20);
         }
+    }
+
+    private Location createSharedRoundSpawn(World world) {
+        Location baseSpawn = world.getSpawnLocation();
+        return new Location(world, baseSpawn.getX() + 0.5D, 200.0D, baseSpawn.getZ() + 0.5D, baseSpawn.getYaw(), baseSpawn.getPitch());
     }
 
     private String formatDuration(long seconds) {

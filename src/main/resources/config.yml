@@ -21,6 +21,9 @@ game:
   # 仅用作自动生成世界的前缀名，不需要提前准备任何对局地图目录
   # 预热出生点附近区块半径，越大开局越流畅，但后台准备越久
   preload-radius-chunks: 6
+  # 分批预热，避免主线程长时间阻塞
+  preload-batch-size: 2
+  preload-batch-interval-ticks: 1
 
   # 每局开局是否重置时间与天气
   reset-time-each-round: true
@@ -86,6 +89,12 @@ powerups:
     iron: 22
     diamond: 30
     netherite: 40
+
+  point-item-prices:
+    highlight_all_players: 8
+    swap_random_player: 15
+    mineral_lootbox: 10
+    pardon_task_penalty: 15
 
   ore-exchange-points:
     coal: 1
