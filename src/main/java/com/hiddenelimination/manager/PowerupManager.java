@@ -76,6 +76,7 @@ public final class PowerupManager {
     private final Map<UUID, Integer> probeCredits = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> shieldCredits = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> misleadCredits = new ConcurrentHashMap<>();
+    private final Set<UUID> redeemedTaskPenaltyPardonPlayers = ConcurrentHashMap.newKeySet();
 
     private final Map<UUID, Long> shieldActiveUntilMillis = new ConcurrentHashMap<>();
     private final Map<UUID, Long> shieldCooldownUntilMillis = new ConcurrentHashMap<>();
@@ -113,6 +114,7 @@ public final class PowerupManager {
         probeCredits.clear();
         shieldCredits.clear();
         misleadCredits.clear();
+        redeemedTaskPenaltyPardonPlayers.clear();
         shieldActiveUntilMillis.clear();
         shieldCooldownUntilMillis.clear();
         pendingFakeBroadcastCount = 0;
@@ -139,6 +141,7 @@ public final class PowerupManager {
         probeCredits.clear();
         shieldCredits.clear();
         misleadCredits.clear();
+        redeemedTaskPenaltyPardonPlayers.clear();
         shieldActiveUntilMillis.clear();
         shieldCooldownUntilMillis.clear();
         pendingFakeBroadcastCount = 0;
@@ -500,7 +503,7 @@ public final class PowerupManager {
         PointItem[] pointItems = PointItem.values();
         for (int i = 0; i < pointItems.length && i < ARMOR_SELECT_SLOTS.length; i++) {
             PointItem pointItem = pointItems[i];
-            menu.setItem(ARMOR_SELECT_SLOTS[i], createPointItem(pointItem, points));
+            menu.setItem(ARMOR_SELECT_SLOTS[i], createPointItem(player, pointItem, points));
         }
 
         menu.setItem(4, createMenuItem(
@@ -538,7 +541,7 @@ public final class PowerupManager {
                 Material.SHIELD,
                 ChatColor.AQUA + "规则屏蔽",
                 List.of(
-                        ChatColor.GRAY + "在持续时间内触发自己规则不会淘汰",
+                        ChatColor.GRAY + "激活后 30 秒内不会被规则淘汰",
                         ChatColor.GRAY + "当前可用：" + ChatColor.GREEN + getShieldCredits(player.getUniqueId()),
                         ChatColor.GRAY + "冷却剩余：" + ChatColor.YELLOW + cooldownRemain + " 秒",
                         ChatColor.DARK_GRAY + "点击立即使用"
@@ -714,21 +717,27 @@ public final class PowerupManager {
         return item;
     }
 
-    private ItemStack createPointItem(PointItem pointItem, int currentPoints) {
+    private ItemStack createPointItem(Player player, PointItem pointItem, int currentPoints) {
         int price = pointItem.price(plugin);
         boolean affordable = currentPoints >= price;
+        boolean redeemed = pointItem == PointItem.PARDON_TASK_PENALTY
+                && redeemedTaskPenaltyPardonPlayers.contains(player.getUniqueId());
         ItemStack item = new ItemStack(pointItem.iconMaterial);
         ItemMeta meta = item.getItemMeta();
         if (meta == null) {
             return item;
         }
         meta.setDisplayName(ChatColor.LIGHT_PURPLE + pointItem.displayName);
-        meta.setLore(List.of(
-                ChatColor.GRAY + "价格：" + ChatColor.LIGHT_PURPLE + price + " 积分",
-                ChatColor.GRAY + pointItem.description,
-                affordable ? ChatColor.GREEN + "可兑换" : ChatColor.RED + "积分不足",
-                ChatColor.DARK_GRAY + "点击立即使用"
-        ));
+        List<String> lore = new ArrayList<>();
+        lore.add(ChatColor.GRAY + "价格：" + ChatColor.LIGHT_PURPLE + price + " 积分");
+        lore.add(ChatColor.GRAY + pointItem.description);
+        if (redeemed) {
+            lore.add(ChatColor.RED + "本局已兑换过");
+        } else {
+            lore.add(affordable ? ChatColor.GREEN + "可兑换" : ChatColor.RED + "积分不足");
+            lore.add(ChatColor.DARK_GRAY + "点击立即使用");
+        }
+        meta.setLore(lore);
         meta.getPersistentDataContainer().set(pointItemKey, PersistentDataType.STRING, pointItem.name());
         item.setItemMeta(meta);
         return item;
@@ -879,14 +888,14 @@ public final class PowerupManager {
             return;
         }
 
-        int duration = Math.max(1, plugin.getConfig().getInt("powerups.rule-shield.duration-seconds", 12));
+        int duration = Math.max(1, plugin.getConfig().getInt("powerups.rule-shield.duration-seconds", 30));
         int cooldown = Math.max(duration, plugin.getConfig().getInt("powerups.rule-shield.cooldown-seconds", 120));
 
         long now = System.currentTimeMillis();
         shieldActiveUntilMillis.put(player.getUniqueId(), now + duration * 1000L);
         shieldCooldownUntilMillis.put(player.getUniqueId(), now + cooldown * 1000L);
 
-        uiManager.success(player, "规则屏蔽已激活，持续 " + duration + " 秒，冷却 " + cooldown + " 秒");
+        uiManager.success(player, "规则屏蔽已激活，" + duration + " 秒内不会被规则淘汰，冷却 " + cooldown + " 秒");
     }
 
     private void tryUseMisleadBroadcast(Player player) {
@@ -990,6 +999,10 @@ public final class PowerupManager {
     }
 
     private boolean useTaskPenaltyPardon(Player player) {
+        if (redeemedTaskPenaltyPardonPlayers.contains(player.getUniqueId())) {
+            uiManager.warn(player, "任务赦免每局只能兑换一次。");
+            return false;
+        }
         if (taskManager == null) {
             uiManager.warn(player, "任务系统不可用，无法赦免。");
             return false;
@@ -999,6 +1012,7 @@ public final class PowerupManager {
             uiManager.warn(player, "当前无法使用赦免（请在对局进行中使用）。");
             return false;
         }
+        redeemedTaskPenaltyPardonPlayers.add(player.getUniqueId());
         uiManager.info(player, "已获得本次任务失败惩罚赦免。");
         return true;
     }
@@ -1509,7 +1523,7 @@ public final class PowerupManager {
         HIGHLIGHT_ALL_PLAYERS("高亮所有玩家", "highlight_all_players", 12, Material.SPECTRAL_ARROW, "使所有存活玩家发光一段时间"),
         SWAP_RANDOM_PLAYER("随机互换位置", "swap_random_player", 10, Material.ENDER_PEARL, "与随机一名存活玩家互换位置"),
         MINERAL_LOOTBOX("矿物盲盒", "mineral_lootbox", 8, Material.CHEST, "随机获得若干矿物资源"),
-        PARDON_TASK_PENALTY("赦免任务惩罚", "pardon_task_penalty", 9, Material.TOTEM_OF_UNDYING, "免除本次任务失败惩罚一次"),
+        PARDON_TASK_PENALTY("赦免任务惩罚", "pardon_task_penalty", 50, Material.TOTEM_OF_UNDYING, "免除本次任务失败惩罚一次（每局限购一次）"),
         READ_PHD("读博", "read_phd", 10, Material.ENCHANTED_BOOK, "75%正面效果，25%负面效果的随机事件");
 
         private final String displayName;

@@ -112,7 +112,7 @@ powerups:
   menu-compass-slot: 8
 
   rule-shield:
-    duration-seconds: 12
+    duration-seconds: 30
     cooldown-seconds: 120
 
   armor-set-prices:
@@ -127,7 +127,7 @@ powerups:
     highlight_all_players: 8
     swap_random_player: 15
     mineral_lootbox: 10
-    pardon_task_penalty: 15
+    pardon_task_penalty: 50
     read_phd: 10
 
   read-phd:
