@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 大厅设置交互面板管理器（TextDisplay + Interaction）。
@@ -48,6 +49,9 @@ public final class LobbyPanelManager {
     private final org.bukkit.NamespacedKey panelMarkerKey;
     private final org.bukkit.NamespacedKey panelActionKey;
     private final org.bukkit.NamespacedKey panelSettingKey;
+    private static final Set<String> PANEL_LABEL_KEYWORDS = Set.of(
+            "大厅设置面板", "初始生命值", "对局总时长", "规则揭示间隔", "边界初始大小", "边界最终大小", "任务失败扣分", "[+]", "[-]"
+    );
 
     private final Map<PanelSetting, TextDisplay> valueDisplays = new EnumMap<>(PanelSetting.class);
 
@@ -69,6 +73,9 @@ public final class LobbyPanelManager {
     }
 
     public void start() {
+        if (refreshTask != null && !refreshTask.isCancelled()) {
+            return;
+        }
         cleanupPanelEntities();
         rebuildPanel();
         this.refreshTask = plugin.getServer().getScheduler().runTaskTimer(plugin, this::refreshPanel, 40L, 40L);
@@ -152,12 +159,29 @@ public final class LobbyPanelManager {
     }
 
     public void cleanupPanelEntities() {
+        Location center = getPanelCenterLocation();
+        World targetWorld = center == null ? null : center.getWorld();
+        double minX = plugin.getConfig().getDouble(CONFIG_AREA + ".min.x", DEFAULT_AREA_MIN_X) - 4.0D;
+        double minY = plugin.getConfig().getDouble(CONFIG_AREA + ".min.y", DEFAULT_AREA_MIN_Y) - 4.0D;
+        double minZ = plugin.getConfig().getDouble(CONFIG_AREA + ".min.z", DEFAULT_AREA_MIN_Z) - 4.0D;
+        double maxX = plugin.getConfig().getDouble(CONFIG_AREA + ".max.x", DEFAULT_AREA_MAX_X) + 4.0D;
+        double maxY = plugin.getConfig().getDouble(CONFIG_AREA + ".max.y", DEFAULT_AREA_MAX_Y) + 4.0D;
+        double maxZ = plugin.getConfig().getDouble(CONFIG_AREA + ".max.z", DEFAULT_AREA_MAX_Z) + 4.0D;
+
         for (World world : plugin.getServer().getWorlds()) {
+            if (targetWorld != null && !targetWorld.equals(world)) {
+                continue;
+            }
             for (Entity entity : world.getEntities()) {
                 String marker = entity.getPersistentDataContainer().get(panelMarkerKey, PersistentDataType.STRING);
                 if ("1".equals(marker)) {
                     entity.remove();
+                    continue;
                 }
+                if (!isLikelyPanelOrphan(entity, minX, minY, minZ, maxX, maxY, maxZ)) {
+                    continue;
+                }
+                entity.remove();
             }
         }
     }
@@ -403,6 +427,33 @@ public final class LobbyPanelManager {
 
     private int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private boolean isLikelyPanelOrphan(Entity entity, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+        if (entity == null) {
+            return false;
+        }
+        if (entity.getType() != EntityType.TEXT_DISPLAY && entity.getType() != EntityType.INTERACTION) {
+            return false;
+        }
+        Location loc = entity.getLocation();
+        if (loc.getX() < minX || loc.getX() > maxX || loc.getY() < minY || loc.getY() > maxY || loc.getZ() < minZ || loc.getZ() > maxZ) {
+            return false;
+        }
+        if (entity.getPersistentDataContainer().has(panelActionKey, PersistentDataType.STRING)
+                || entity.getPersistentDataContainer().has(panelSettingKey, PersistentDataType.STRING)) {
+            return true;
+        }
+        if (entity instanceof TextDisplay textDisplay) {
+            String plain = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText()
+                    .serialize(textDisplay.text() == null ? net.kyori.adventure.text.Component.empty() : textDisplay.text());
+            for (String keyword : PANEL_LABEL_KEYWORDS) {
+                if (plain.contains(keyword)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private enum PanelSetting {
