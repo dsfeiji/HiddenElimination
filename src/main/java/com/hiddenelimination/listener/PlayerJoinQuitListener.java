@@ -36,7 +36,6 @@ public final class PlayerJoinQuitListener implements Listener {
         this.gameManager = gameManager;
     }
 
-    @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());

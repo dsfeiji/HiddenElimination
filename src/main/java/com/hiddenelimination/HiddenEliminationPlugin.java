@@ -2,12 +2,14 @@ package com.hiddenelimination;
 
 import com.hiddenelimination.command.HECommand;
 import com.hiddenelimination.listener.GameListener;
+import com.hiddenelimination.listener.LobbyPanelListener;
 import com.hiddenelimination.listener.LobbyProtectionListener;
 import com.hiddenelimination.listener.PlayerJoinQuitListener;
 import com.hiddenelimination.listener.PowerupListener;
 import com.hiddenelimination.listener.PrepareItemListener;
 import com.hiddenelimination.manager.ConditionManager;
 import com.hiddenelimination.manager.GameManager;
+import com.hiddenelimination.manager.LobbyPanelManager;
 import com.hiddenelimination.manager.PlayerDataManager;
 import com.hiddenelimination.manager.PowerupManager;
 import com.hiddenelimination.manager.SpawnManager;
@@ -28,6 +30,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
     private PowerupManager powerupManager;
     private GameManager gameManager;
     private TaskManager taskManager;
+    private LobbyPanelManager lobbyPanelManager;
 
     @Override
     public void onEnable() {
@@ -48,6 +51,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
                 taskManager,
                 powerupManager
         );
+        this.lobbyPanelManager = new LobbyPanelManager(this, spawnManager, gameManager, uiManager);
 
         this.conditionManager.bindTaskManager(taskManager);
         this.conditionManager.bindPowerupManager(powerupManager);
@@ -62,6 +66,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         registerListeners();
 
         spawnManager.initializePreparedGameWorldAsync();
+        lobbyPanelManager.start();
         uiManager.startUiLoop();
         getServer().getScheduler().runTaskTimer(this, spawnManager::enforceLobbyEnvironment, 0L, 200L);
         getLogger().info("HiddenElimination 已启用");
@@ -75,6 +80,9 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         if (uiManager != null) {
             uiManager.stopUiLoop();
         }
+        if (lobbyPanelManager != null) {
+            lobbyPanelManager.shutdown();
+        }
         getLogger().info("HiddenElimination 已关闭");
     }
 
@@ -86,7 +94,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
             return;
         }
 
-        HECommand command = new HECommand(playerDataManager, uiManager, spawnManager, gameManager);
+        HECommand command = new HECommand(playerDataManager, uiManager, spawnManager, gameManager, lobbyPanelManager);
         heCommand.setExecutor(command);
         heCommand.setTabCompleter(command);
     }
@@ -110,6 +118,10 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         );
         getServer().getPluginManager().registerEvents(
                 new PowerupListener(gameManager, powerupManager),
+                this
+        );
+        getServer().getPluginManager().registerEvents(
+                new LobbyPanelListener(lobbyPanelManager, uiManager),
                 this
         );
     }

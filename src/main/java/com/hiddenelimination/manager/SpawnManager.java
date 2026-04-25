@@ -50,6 +50,9 @@ public final class SpawnManager {
         plugin.getConfig().set("lobby.yaw", location.getYaw());
         plugin.getConfig().set("lobby.pitch", location.getPitch());
         plugin.saveConfig();
+        if (location.getWorld() != null) {
+            location.getWorld().setSpawnLocation(location);
+        }
     }
 
     public Location getLobbyLocation() {
@@ -87,6 +90,11 @@ public final class SpawnManager {
         World lobbyWorld = getLobbyWorld();
         if (lobbyWorld == null) {
             return;
+        }
+
+        Location lobby = getLobbyLocation();
+        if (lobby != null && lobby.getWorld() != null && lobby.getWorld().equals(lobbyWorld)) {
+            lobbyWorld.setSpawnLocation(lobby);
         }
 
         lobbyWorld.setTime(1000L);

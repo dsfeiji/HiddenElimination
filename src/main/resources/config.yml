@@ -2,11 +2,44 @@
 
 lobby:
   world: lobby
-  x: 0.5
-  y: 99.0
-  z: 0.5
-  yaw: 0.0
+  x: 9.29
+  y: -56.0
+  z: 2.98
+  yaw: 180.0
   pitch: 0.0
+
+lobby-settings-panel:
+  allow-adjust-when-running: false
+  area:
+    enabled: true
+    world: lobby
+    min:
+      x: 3.48
+      y: -56.0
+      z: -9.44
+    max:
+      x: 15.38
+      y: -50.51
+      z: -9.0
+  face-target:
+    world: lobby
+    x: 9.29
+    y: -56.0
+    z: 2.98
+  anchor:
+    world: lobby
+    x: 9.43
+    y: -53.255
+    z: -9.22
+    yaw: 0.66
+    pitch: 0.0
+  layout:
+    title-y-offset: 2.7
+    first-row-y-offset: 2.1
+    row-gap: 0.35
+    text-forward-offset: 0.0
+    button-horizontal-offset: 3.0
+    button-forward-offset: 0.0
 
 game:
   world: he_game
