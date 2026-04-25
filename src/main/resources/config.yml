@@ -2,9 +2,9 @@
 
 lobby:
   world: lobby
-  x: 9.29
-  y: -56.0
-  z: 2.98
+  x: 9.5
+  y: -57.0
+  z: 2.5
   yaw: 180.0
   pitch: 0.0
 
