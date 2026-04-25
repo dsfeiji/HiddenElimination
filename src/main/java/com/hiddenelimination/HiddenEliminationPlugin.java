@@ -105,7 +105,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
                 this
         );
         getServer().getPluginManager().registerEvents(
-                new PlayerJoinQuitListener(playerDataManager, spawnManager, uiManager, gameManager),
+                new PlayerJoinQuitListener(this, playerDataManager, spawnManager, uiManager, gameManager),
                 this
         );
         getServer().getPluginManager().registerEvents(

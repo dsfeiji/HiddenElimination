@@ -1,5 +1,6 @@
 package com.hiddenelimination.listener;
 
+import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.PlayerDataManager;
 import com.hiddenelimination.manager.SpawnManager;
@@ -19,17 +20,20 @@ import org.bukkit.event.player.PlayerQuitEvent;
  */
 public final class PlayerJoinQuitListener implements Listener {
 
+    private final HiddenEliminationPlugin plugin;
     private final PlayerDataManager playerDataManager;
     private final SpawnManager spawnManager;
     private final UIManager uiManager;
     private final GameManager gameManager;
 
     public PlayerJoinQuitListener(
+            HiddenEliminationPlugin plugin,
             PlayerDataManager playerDataManager,
             SpawnManager spawnManager,
             UIManager uiManager,
             GameManager gameManager
     ) {
+        this.plugin = plugin;
         this.playerDataManager = playerDataManager;
         this.spawnManager = spawnManager;
         this.uiManager = uiManager;
@@ -40,8 +44,16 @@ public final class PlayerJoinQuitListener implements Listener {
         Player player = event.getPlayer();
         PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());
 
-        // 每次进服都强制回大厅
-        spawnManager.teleportToLobby(player);
+        // 延迟一拍再传送，避免被默认出生点或其他进服逻辑覆盖。
+        var lobbyLocation = spawnManager.getLobbyLocation();
+        if (lobbyLocation != null) {
+            player.setRespawnLocation(lobbyLocation, true);
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                if (player.isOnline()) {
+                    player.teleport(lobbyLocation);
+                }
+            }, 1L);
+        }
 
         // 统一进入大厅状态
         data.setJoined(true);
