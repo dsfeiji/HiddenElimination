@@ -50,7 +50,8 @@ public final class LobbyPanelManager {
     private final org.bukkit.NamespacedKey panelActionKey;
     private final org.bukkit.NamespacedKey panelSettingKey;
     private static final Set<String> PANEL_LABEL_KEYWORDS = Set.of(
-            "大厅设置面板", "初始生命值", "对局总时长", "规则揭示间隔", "边界初始大小", "边界最终大小", "任务失败扣分", "[+]", "[-]"
+            "大厅设置面板", "初始生命值", "对局总时长", "规则揭示间隔", "任务发布间隔", "任务限时",
+            "边界初始大小", "边界最终大小", "任务失败扣分", "[+]", "[-]"
     );
 
     private final Map<PanelSetting, TextDisplay> valueDisplays = new EnumMap<>(PanelSetting.class);
@@ -122,10 +123,14 @@ public final class LobbyPanelManager {
         double textForwardOffset = plugin.getConfig().getDouble(CONFIG_ROOT + ".layout.text-forward-offset", 0.7D);
         double buttonHorizontalOffset = plugin.getConfig().getDouble(CONFIG_ROOT + ".layout.button-horizontal-offset", 1.8D);
         double buttonForwardOffset = plugin.getConfig().getDouble(CONFIG_ROOT + ".layout.button-forward-offset", 0.7D);
+        double compactFactor = Math.max(0.6D, Math.min(1.0D, plugin.getConfig().getDouble(CONFIG_ROOT + ".layout.y-compact-factor", 0.92D)));
 
         boolean useAreaLayout = plugin.getConfig().getBoolean(CONFIG_AREA + ".enabled", true);
         double topY = plugin.getConfig().getDouble(CONFIG_AREA + ".max.y", DEFAULT_AREA_MAX_Y);
         double bottomY = plugin.getConfig().getDouble(CONFIG_AREA + ".min.y", DEFAULT_AREA_MIN_Y);
+        double centerY = (topY + bottomY) / 2.0D;
+        topY = centerY + (topY - centerY) * compactFactor;
+        bottomY = centerY + (bottomY - centerY) * compactFactor;
 
         Location titleLoc = useAreaLayout
                 ? center.clone().add(0.0D, topY - center.getY() + 0.25D, 0.0D).add(forward.clone().multiply(textForwardOffset))
@@ -371,7 +376,7 @@ public final class LobbyPanelManager {
     private String formatValue(PanelSetting setting, int displayValue) {
         return switch (setting) {
             case ROUND_DURATION_MINUTES -> displayValue == 0 ? "不限时" : displayValue + " 分钟";
-            case REVEAL_INTERVAL_MINUTES -> displayValue + " 分钟";
+            case REVEAL_INTERVAL_MINUTES, TASK_INTERVAL_MINUTES, TASK_TIME_LIMIT_MINUTES -> displayValue + " 分钟";
             case BORDER_START_SIZE, BORDER_END_SIZE -> displayValue + " 格";
             default -> Integer.toString(displayValue);
         };
@@ -382,6 +387,17 @@ public final class LobbyPanelManager {
             case INITIAL_LIVES -> gameManager.getRoundInitialLives();
             case ROUND_DURATION_MINUTES -> (int) (gameManager.getRoundDurationSeconds() / 60L);
             case REVEAL_INTERVAL_MINUTES -> (int) (gameManager.getRoundRevealIntervalSeconds() / 60L);
+            case TASK_INTERVAL_MINUTES -> {
+                long min = Math.max(60L, plugin.getConfig().getLong("tasks.publish-interval-seconds-min", 60L));
+                long max = Math.max(min, plugin.getConfig().getLong("tasks.publish-interval-seconds-max", min));
+                yield (int) Math.round(((min + max) / 2.0D) / 60.0D);
+            }
+            case TASK_TIME_LIMIT_MINUTES -> {
+                long easy = plugin.getConfig().getLong("tasks.time-limit-seconds.easy", 90L);
+                long medium = plugin.getConfig().getLong("tasks.time-limit-seconds.medium", 75L);
+                long hard = plugin.getConfig().getLong("tasks.time-limit-seconds.hard", 60L);
+                yield (int) Math.round(((easy + medium + hard) / 3.0D) / 60.0D);
+            }
             case BORDER_START_SIZE -> (int) Math.round(plugin.getConfig().getDouble("world-border.start-size", 700.0D));
             case BORDER_END_SIZE -> (int) Math.round(plugin.getConfig().getDouble("world-border.end-size", 120.0D));
             case TASK_FAILURE_PENALTY -> Math.max(0, plugin.getConfig().getInt("tasks.failure-point-penalty", 4));
@@ -403,6 +419,17 @@ public final class LobbyPanelManager {
                 long seconds = displayValue * 60L;
                 plugin.getConfig().set("game.reveal-interval-seconds", seconds);
                 gameManager.setLobbyRevealIntervalSecondsOverride(seconds);
+            }
+            case TASK_INTERVAL_MINUTES -> {
+                long seconds = displayValue * 60L;
+                plugin.getConfig().set("tasks.publish-interval-seconds-min", seconds);
+                plugin.getConfig().set("tasks.publish-interval-seconds-max", seconds);
+            }
+            case TASK_TIME_LIMIT_MINUTES -> {
+                long seconds = displayValue * 60L;
+                plugin.getConfig().set("tasks.time-limit-seconds.easy", seconds);
+                plugin.getConfig().set("tasks.time-limit-seconds.medium", seconds);
+                plugin.getConfig().set("tasks.time-limit-seconds.hard", seconds);
             }
             case BORDER_START_SIZE -> {
                 double startSize = displayValue;
@@ -460,6 +487,8 @@ public final class LobbyPanelManager {
         INITIAL_LIVES("initial_lives", "初始生命值", 1, 20, 1),
         ROUND_DURATION_MINUTES("round_duration_minutes", "对局总时长", 0, 180, 1),
         REVEAL_INTERVAL_MINUTES("reveal_interval_minutes", "规则揭示间隔", 1, 180, 1),
+        TASK_INTERVAL_MINUTES("task_interval_minutes", "任务发布间隔", 1, 30, 1),
+        TASK_TIME_LIMIT_MINUTES("task_time_limit_minutes", "任务限时", 1, 30, 1),
         BORDER_START_SIZE("border_start_size", "边界初始大小", 20, 3000, 10),
         BORDER_END_SIZE("border_end_size", "边界最终大小", 10, 3000, 10),
         TASK_FAILURE_PENALTY("task_failure_penalty", "任务失败扣分", 0, 50, 1);

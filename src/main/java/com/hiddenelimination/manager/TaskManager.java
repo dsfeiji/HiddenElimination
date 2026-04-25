@@ -374,6 +374,14 @@ public final class TaskManager {
         return task.taskType().displayName() + " [难度 " + task.difficultyTier() + "]";
     }
 
+    public String getCurrentTaskName() {
+        GlobalTask task = currentTask;
+        if (task == null) {
+            return "无";
+        }
+        return task.taskType().displayName();
+    }
+
     public int getCurrentTaskRequiredCount() {
         GlobalTask task = currentTask;
         return task == null ? 0 : task.requiredCount();

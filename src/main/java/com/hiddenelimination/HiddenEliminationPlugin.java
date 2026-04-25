@@ -61,6 +61,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         this.powerupManager.bindConditionManager(conditionManager);
         this.powerupManager.bindTaskManager(taskManager);
         this.uiManager.bindManagers(playerDataManager, gameManager, conditionManager, taskManager);
+        this.gameManager.bindLobbyPanelManager(lobbyPanelManager);
 
         registerCommand();
         registerListeners();
@@ -105,7 +106,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
                 this
         );
         getServer().getPluginManager().registerEvents(
-                new PlayerJoinQuitListener(this, playerDataManager, spawnManager, uiManager, gameManager),
+                new PlayerJoinQuitListener(this, playerDataManager, spawnManager, uiManager, gameManager, lobbyPanelManager),
                 this
         );
         getServer().getPluginManager().registerEvents(

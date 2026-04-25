@@ -5,6 +5,7 @@ import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -960,7 +961,7 @@ public final class PowerupManager {
                 continue;
             }
             Player target = plugin.getServer().getPlayer(playerId);
-            if (target != null && target.isOnline()) {
+            if (target != null && target.isOnline() && target.getGameMode() == GameMode.SURVIVAL) {
                 candidates.add(target);
             }
         }

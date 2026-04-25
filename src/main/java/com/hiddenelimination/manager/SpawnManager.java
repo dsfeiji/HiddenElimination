@@ -20,6 +20,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 /**
  * 出生点和大厅传送管理。
@@ -109,6 +110,7 @@ public final class SpawnManager {
             return;
         }
 
+        sweepStaleGeneratedWorldDirectoriesAsync();
         ensurePreparedGameWorldAsync();
     }
 
@@ -179,6 +181,7 @@ public final class SpawnManager {
             if (retiredWorldName != null && !retiredWorldName.isBlank()) {
                 cleanupGeneratedWorldAsync(retiredWorldName);
             }
+            sweepStaleGeneratedWorldDirectoriesAsync();
             ensurePreparedGameWorldAsync();
         }
     }
@@ -344,6 +347,38 @@ public final class SpawnManager {
         });
     }
 
+    private void sweepStaleGeneratedWorldDirectoriesAsync() {
+        if (!plugin.getConfig().getBoolean("game.reset-world-each-round", false)) {
+            return;
+        }
+        String basePrefix = getConfiguredBaseWorldName() + GENERATED_WORLD_INFIX;
+        File worldContainer = Bukkit.getWorldContainer();
+        CompletableFuture.runAsync(() -> {
+            File[] children = worldContainer.listFiles(File::isDirectory);
+            if (children == null || children.length == 0) {
+                return;
+            }
+            for (File child : children) {
+                String name = child.getName();
+                if (!name.startsWith(basePrefix)) {
+                    continue;
+                }
+                if (name.equals(activeGameWorldName) || name.equals(preparedGameWorldName)) {
+                    continue;
+                }
+                if (Bukkit.getWorld(name) != null) {
+                    continue;
+                }
+                try {
+                    deleteDirectory(child.toPath());
+                    plugin.getLogger().info("[地图清理] 已自动清理遗留对局目录: " + name);
+                } catch (IOException e) {
+                    plugin.getLogger().warning("[地图清理] 自动清理失败: " + name + "，原因: " + e.getMessage());
+                }
+            }
+        });
+    }
+
     private String buildGeneratedWorldName() {
         return getConfiguredBaseWorldName() + GENERATED_WORLD_INFIX + UUID.randomUUID().toString().replace("-", "");
     }
@@ -453,7 +488,7 @@ public final class SpawnManager {
             return;
         }
 
-        try (var walk = Files.walk(path)) {
+        try (Stream<Path> walk = Files.walk(path)) {
             walk.sorted(Comparator.reverseOrder())
                     .forEach(p -> {
                         try {

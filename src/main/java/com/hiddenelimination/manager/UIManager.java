@@ -161,6 +161,7 @@ public final class UIManager {
                     clearActionBar(player);
                 }
             }
+            updateTabPlayerPoints();
         }, 20L, 20L);
     }
 
@@ -197,39 +198,10 @@ public final class UIManager {
 
     private void updateGameSidebar(Player player) {
         Scoreboard board = Bukkit.getScoreboardManager().getNewScoreboard();
-        Objective objective = board.registerNewObjective("he_game", "dummy", ChatColor.RED + "对局进行中");
+        Objective objective = board.registerNewObjective("he_game", "dummy", ChatColor.LIGHT_PURPLE + "【规则】");
         objective.setDisplaySlot(DisplaySlot.SIDEBAR);
 
-        long alive = gameManager.getActivePlayersSnapshot().stream()
-                .map(playerDataManager::get)
-                .filter(data -> data != null && !data.isEliminated())
-                .count();
-
-        long total = gameManager.getActivePlayersSnapshot().size();
-        long revealedCount = conditionManager.getRevealedConditionsSnapshot().size();
-
-        int points = taskManager.getPlayerTaskPoints(player.getUniqueId());
-        int lives = taskManager.getPlayerTaskLives(player.getUniqueId());
-        int progress = taskManager.getPlayerProgress(player.getUniqueId());
-        int required = taskManager.getCurrentTaskRequiredCount();
-
         List<String> lines = new ArrayList<>();
-        lines.add(ChatColor.GRAY + "----------------");
-        lines.add(ChatColor.YELLOW + "存活: " + ChatColor.GREEN + alive + ChatColor.GRAY + "/" + ChatColor.WHITE + total);
-        lines.add(ChatColor.DARK_PURPLE + "[规则] 已公开: " + ChatColor.LIGHT_PURPLE + revealedCount);
-        lines.add(ChatColor.GREEN + "[任务] 当前积分: " + ChatColor.YELLOW + points);
-        lines.add(ChatColor.GREEN + "[任务] 任务生命: " + ChatColor.RED + lives);
-
-        if (taskManager.hasActiveTask()) {
-            lines.add(ChatColor.GREEN + "[任务] " + ChatColor.WHITE + taskManager.getCurrentTaskDisplay());
-            lines.add(ChatColor.GREEN + "[任务] 进度: " + ChatColor.GREEN + progress + ChatColor.GRAY + "/" + ChatColor.WHITE + required);
-            lines.add(ChatColor.GREEN + "[任务] 倒计时: " + ChatColor.RED + formatSeconds(taskManager.getSecondsUntilTaskDeadline()));
-        } else {
-            lines.add(ChatColor.GREEN + "[任务] 下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish()));
-        }
-
-        lines.add(ChatColor.DARK_GRAY + " ");
-        lines.add(ChatColor.DARK_PURPLE + "[规则] 最新公开:");
 
         List<ConditionManager.RevealedCondition> reveals = conditionManager.getRevealedConditionsSnapshot();
         if (reveals.isEmpty()) {
@@ -240,9 +212,8 @@ public final class UIManager {
             for (int i = start; i < end; i++) {
                 ConditionManager.RevealedCondition rc = reveals.get(i);
                 boolean triggered = conditionManager.getTriggeredConditionsSnapshot().contains(rc.conditionType());
-                String status = triggered ? "已触发" : "未触发";
                 ChatColor base = triggered ? ChatColor.GRAY : ChatColor.GREEN;
-                lines.add(base + "- " + rc.conditionType().getDisplayName() + " [" + status + "]");
+                lines.add(base + "- " + rc.conditionType().getDisplayName());
             }
             if (reveals.size() > RULES_PAGE_SIZE) {
                 int page = (start / RULES_PAGE_SIZE) + 1;
@@ -251,28 +222,25 @@ public final class UIManager {
             }
         }
 
-        lines.add(ChatColor.GRAY + "----------------");
-
         applyLines(objective, lines);
         player.setScoreboard(board);
     }
 
     private void updateGameActionBar(Player player) {
         long ruleRemain = conditionManager.getSecondsUntilNextReveal();
-
-        String borderText;
-        if (!gameManager.isBorderEnabled()) {
-            borderText = ChatColor.GRAY + "缩圈开始: --:--";
+        int lives = taskManager.getPlayerTaskLives(player.getUniqueId());
+        String taskText;
+        if (taskManager.hasActiveTask()) {
+            taskText = ChatColor.GREEN + "当前任务: " + ChatColor.WHITE + taskManager.getCurrentTaskName()
+                    + ChatColor.GRAY + " " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilTaskDeadline());
         } else {
-            long untilStart = gameManager.getBorderSecondsUntilStart();
-            borderText = ChatColor.AQUA + "缩圈开始: " + ChatColor.YELLOW + formatSeconds(untilStart);
+            taskText = ChatColor.GREEN + "下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish());
         }
-
-        String taskText = ChatColor.GREEN + "下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish());
+        String livesText = ChatColor.RED + "当前生命: " + ChatColor.WHITE + lives;
 
         String text = ChatColor.GOLD + "下次公开规则: " + ChatColor.YELLOW + formatSeconds(ruleRemain)
                 + ChatColor.DARK_GRAY + " | " + taskText
-                + ChatColor.DARK_GRAY + " | " + borderText;
+                + ChatColor.DARK_GRAY + " | " + livesText;
         player.sendActionBar(Component.text(text));
     }
 
@@ -306,5 +274,16 @@ public final class UIManager {
             return Math.max(0, revealedCount - RULES_PAGE_SIZE);
         }
         return start;
+    }
+
+    private void updateTabPlayerPoints() {
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (gameManager != null && gameManager.isRunning()) {
+                int points = taskManager.getPlayerTaskPoints(online.getUniqueId());
+                online.setPlayerListName(ChatColor.WHITE + online.getName() + ChatColor.GRAY + " [" + points + "]");
+            } else {
+                online.setPlayerListName(ChatColor.WHITE + online.getName());
+            }
+        }
     }
 }

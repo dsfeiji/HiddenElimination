@@ -37,6 +37,7 @@ lobby-settings-panel:
     title-y-offset: 2.7
     first-row-y-offset: 2.1
     row-gap: 0.35
+    y-compact-factor: 0.9
     text-forward-offset: 0.0
     button-horizontal-offset: 3.0
     button-forward-offset: 0.0

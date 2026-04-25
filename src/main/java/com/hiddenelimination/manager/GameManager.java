@@ -10,6 +10,8 @@ import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.WorldBorder;
+import org.bukkit.advancement.Advancement;
+import org.bukkit.advancement.AdvancementProgress;
 import org.bukkit.attribute.Attribute;
 import org.bukkit.entity.Player;
 import org.bukkit.potion.PotionEffect;
@@ -38,6 +40,7 @@ public final class GameManager {
     private final ConditionManager conditionManager;
     private final TaskManager taskManager;
     private final PowerupManager powerupManager;
+    private LobbyPanelManager lobbyPanelManager;
 
     private final Set<UUID> activePlayers = ConcurrentHashMap.newKeySet();
     private final List<UUID> eliminationOrder = new ArrayList<>();
@@ -103,6 +106,10 @@ public final class GameManager {
 
     public void setLobbyRevealIntervalSecondsOverride(long intervalSeconds) {
         this.lobbyRevealIntervalSecondsOverride = Math.max(10L, intervalSeconds);
+    }
+
+    public void bindLobbyPanelManager(LobbyPanelManager lobbyPanelManager) {
+        this.lobbyPanelManager = lobbyPanelManager;
     }
 
     public int getRoundInitialLives() {
@@ -219,6 +226,7 @@ public final class GameManager {
             player.teleport(sharedSpawn);
             player.addPotionEffect(new PotionEffect(PotionEffectType.INVISIBILITY, 20 * 20, 0, false, false, true));
             player.addPotionEffect(new PotionEffect(PotionEffectType.SLOW_FALLING, 20 * 20, 0, false, false, true));
+            player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 20 * 20, 1, false, false, true));
         }
         conditionManager.assignHiddenConditions(readyPlayers);
 
@@ -434,6 +442,11 @@ public final class GameManager {
                 giveLobbyItems(player);
                 spawnManager.teleportToLobby(player);
             }
+            revokeAllAdvancementsForAllOnlinePlayers();
+            if (lobbyPanelManager != null) {
+                lobbyPanelManager.cleanupPanelEntities();
+                lobbyPanelManager.rebuildPanel();
+            }
             playerDataManager.resetAllRoundState();
             activePlayers.clear();
             eliminationOrder.clear();
@@ -448,6 +461,19 @@ public final class GameManager {
         }
 
         uiManager.broadcast(plugin.getConfig().getString("messages.game-end", "本局结束。"));
+    }
+
+    private void revokeAllAdvancementsForAllOnlinePlayers() {
+        for (Player online : plugin.getServer().getOnlinePlayers()) {
+            var iterator = plugin.getServer().advancementIterator();
+            while (iterator.hasNext()) {
+                Advancement advancement = iterator.next();
+                AdvancementProgress progress = online.getAdvancementProgress(advancement);
+                for (String awarded : new ArrayList<>(progress.getAwardedCriteria())) {
+                    progress.revokeCriteria(awarded);
+                }
+            }
+        }
     }
 
     public void shutdown() {

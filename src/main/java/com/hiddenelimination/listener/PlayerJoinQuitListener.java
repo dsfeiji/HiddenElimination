@@ -2,6 +2,7 @@ package com.hiddenelimination.listener;
 
 import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.manager.GameManager;
+import com.hiddenelimination.manager.LobbyPanelManager;
 import com.hiddenelimination.manager.PlayerDataManager;
 import com.hiddenelimination.manager.SpawnManager;
 import com.hiddenelimination.manager.UIManager;
@@ -25,25 +26,36 @@ public final class PlayerJoinQuitListener implements Listener {
     private final SpawnManager spawnManager;
     private final UIManager uiManager;
     private final GameManager gameManager;
+    private final LobbyPanelManager lobbyPanelManager;
+    private boolean firstLobbyCleanupDone;
 
     public PlayerJoinQuitListener(
             HiddenEliminationPlugin plugin,
             PlayerDataManager playerDataManager,
             SpawnManager spawnManager,
             UIManager uiManager,
-            GameManager gameManager
+            GameManager gameManager,
+            LobbyPanelManager lobbyPanelManager
     ) {
         this.plugin = plugin;
         this.playerDataManager = playerDataManager;
         this.spawnManager = spawnManager;
         this.uiManager = uiManager;
         this.gameManager = gameManager;
+        this.lobbyPanelManager = lobbyPanelManager;
+        this.firstLobbyCleanupDone = false;
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
         PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());
+
+        if (!firstLobbyCleanupDone) {
+            firstLobbyCleanupDone = true;
+            lobbyPanelManager.cleanupPanelEntities();
+            lobbyPanelManager.rebuildPanel();
+        }
 
         // 延迟一拍再传送，避免被默认出生点或其他进服逻辑覆盖。
         var lobbyLocation = spawnManager.getLobbyLocation();
