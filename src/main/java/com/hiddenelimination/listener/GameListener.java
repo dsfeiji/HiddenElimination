@@ -5,6 +5,7 @@ import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.SpawnManager;
 import com.hiddenelimination.manager.TaskManager;
 import com.hiddenelimination.model.ConditionType;
+import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -43,6 +44,7 @@ import org.bukkit.event.player.PlayerToggleSprintEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
 /**
@@ -251,6 +253,11 @@ public final class GameListener implements Listener {
         Player victim = event.getEntity();
         Player killer = victim.getKiller();
 
+        event.getDrops().removeIf(item ->
+                item.getType() == Material.COMPASS
+                        && item.hasItemMeta()
+                        && item.getItemMeta().getDisplayName().contains("指南针"));
+
         taskManager.handlePlayerDeath(victim);
         if (killer != null) {
             taskManager.handlePlayerKill(killer);
@@ -264,6 +271,19 @@ public final class GameListener implements Listener {
         Player player = event.getPlayer();
 
         if (gameManager.isRunning()) {
+            PlayerGameData data = gameManager.getPlayerData(player.getUniqueId());
+            if (data != null && !data.isEliminated()) {
+                if (player.getWorld() != null) {
+                    event.setRespawnLocation(player.getWorld().getSpawnLocation());
+                }
+                JavaPlugin plugin = JavaPlugin.getProvidingPlugin(GameListener.class);
+                plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                    if (player.isOnline()) {
+                        gameManager.givePowerupCompass(player);
+                    }
+                }, 1L);
+                return;
+            }
             gameManager.ensureSpectatorState(player);
             return;
         }

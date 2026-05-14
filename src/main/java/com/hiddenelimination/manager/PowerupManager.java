@@ -1450,7 +1450,7 @@ public final class PowerupManager {
         return pool.get(random.nextInt(pool.size()));
     }
 
-    private void giveMenuCompass(Player player) {
+    public void giveMenuCompass(Player player) {
         ItemStack compass = new ItemStack(Material.COMPASS);
         ItemMeta meta = compass.getItemMeta();
         if (meta == null) {

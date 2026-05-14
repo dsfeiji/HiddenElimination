@@ -288,11 +288,36 @@ public final class GameManager {
     }
 
     public void handlePlayerKilled(Player victim, Player killer) {
-        if (killer != null) {
-            eliminatePlayer(victim, "被 " + killer.getName() + " 击杀");
-        } else {
-            eliminatePlayer(victim, "死亡");
+        UUID playerId = victim.getUniqueId();
+        if (!activePlayers.contains(playerId)) {
+            return;
         }
+
+        PlayerGameData data = playerDataManager.get(playerId);
+        if (data == null || data.isEliminated()) {
+            return;
+        }
+
+        int leftLives = data.consumeTaskLife();
+
+        if (leftLives <= 0) {
+            if (killer != null) {
+                eliminatePlayer(victim, "被 " + killer.getName() + " 击杀，生命耗尽");
+            } else {
+                eliminatePlayer(victim, "死亡，生命耗尽");
+            }
+        } else {
+            String reason = killer != null ? "被 " + killer.getName() + " 击杀" : "死亡";
+            uiManager.broadcast(victim.getName() + " " + reason + "，扣除一条命，剩余生命 " + leftLives);
+        }
+    }
+
+    public PlayerGameData getPlayerData(UUID playerId) {
+        return playerDataManager.get(playerId);
+    }
+
+    public void givePowerupCompass(Player player) {
+        powerupManager.giveMenuCompass(player);
     }
 
     public void handleQuit(Player player) {
