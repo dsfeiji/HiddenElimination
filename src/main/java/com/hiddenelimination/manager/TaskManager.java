@@ -1,6 +1,7 @@
 package com.hiddenelimination.manager;
 
 import com.hiddenelimination.HiddenEliminationPlugin;
+import com.hiddenelimination.condition.ConditionStateEvaluator;
 import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.Material;
@@ -28,7 +29,7 @@ public final class TaskManager {
         KILL_CREEPER("击杀苦力怕", 2),
         KILL_SKELETON("击杀小白", 2),
         EAT_ROTTEN_FLESH("吃腐肉", 2),
-        JUMP("跳跃", 1),
+        JUMP("跳跃", 1, ConditionType.JUMP),
         ADV_A_SEEDY_PLACE("获得【开垦荒地】成就", 2),
         OPEN_DOOR("打开一扇门", 1),
         CRAFT_LIGHTNING_ROD("制作避雷针", 3),
@@ -42,28 +43,60 @@ public final class TaskManager {
         STAND_ON_BEDROCK("站在基岩上", 2),
         CRAFT_ANVIL("制作铁砧", 3),
         KILL_PLAYER("击杀玩家", 3),
-        TOUCH_PLAYER("与其他玩家贴贴", 1),
+        TOUCH_PLAYER("与其他玩家贴贴", 1, ConditionType.TOUCH_PLAYER),
         SWIM("游泳", 1),
         CLIMB("攀爬", 1),
         ADV_TAKE_AIM("获得【瞄准目标】成就", 2),
         PRESS_BUTTON("按下按钮", 1),
         USE_LEVER("按下拉杆", 1),
         ADV_WHENCE_CAME_YOU("获得【我从哪里来】成就", 3),
-        DIE("死亡", 3),
+        DIE("死亡", 3, ConditionType.DIE),
         CRAFT_IRON_PICKAXE("制作铁镐", 2),
         CRAFT_IRON_BLOCK("制作铁块", 3),
         STAND_ON_FARMLAND("站在耕地上", 1),
         STAND_ON_DIRT_PATH("站在草径上", 1),
         STAND_ON_SMOOTH_STONE("站在平滑石头上", 2),
         STAND_ON_POLISHED_GRANITE("站在磨制花岗岩上", 2),
-        STAND_ON_POLISHED_DIORITE("站在磨制闪长岩上", 2);
+        STAND_ON_POLISHED_DIORITE("站在磨制闪长岩上", 2),
+
+        EAT_FOOD("进食", 1, ConditionType.EAT_FOOD),
+        ATTACK_PLAYER("攻击玩家", 3, ConditionType.ATTACK_PLAYER),
+        BREAK_BLOCK("破坏方块", 1, ConditionType.BREAK_BLOCK),
+        PLACE_BLOCK("放置方块", 1, ConditionType.PLACE_BLOCK),
+        SPRINT("开始冲刺", 1, ConditionType.SPRINT),
+        SNEAK("开始潜行", 1, ConditionType.SNEAK),
+        DROP_ITEM("丢弃物品", 1, ConditionType.DROP_ITEM),
+        ENTER_WATER("进入水中", 1, ConditionType.ENTER_WATER),
+        USE_CRAFTING_TABLE("打开工作台", 2, ConditionType.USE_CRAFTING_TABLE),
+        USE_FURNACE("打开熔炉", 2, ConditionType.USE_FURNACE),
+        EQUIP_ARMOR("穿上护甲", 2, ConditionType.EQUIP_ARMOR),
+        TAKE_DAMAGE("受到任意伤害", 2, ConditionType.TAKE_DAMAGE),
+        PICKUP_ITEM("捡起物品", 1, ConditionType.PICKUP_ITEM),
+        STAND_ON_GRASS_BLOCK("站在草方块上", 1, ConditionType.STAND_ON_GRASS_BLOCK),
+        ATTACK_MOB("攻击生物", 2, ConditionType.ATTACK_MOB),
+        HOLD_ANY_ITEM("手持任意物品", 1, ConditionType.HOLD_ANY_ITEM),
+        STOP_MOVING("停止移动", 3, ConditionType.STOP_MOVING),
+        STAND_ON_STONE("站在石头上", 2, ConditionType.STAND_ON_STONE),
+        BLOCK_OVERHEAD("头顶有方块遮挡", 2, ConditionType.BLOCK_OVERHEAD),
+        NO_BLOCK_OVERHEAD("头顶无方块遮挡", 1, ConditionType.NO_BLOCK_OVERHEAD),
+        HAS_WEAPON("背包中有武器", 2, ConditionType.HAS_WEAPON),
+        HAS_FOOD("背包中有食物", 1, ConditionType.HAS_FOOD),
+        HAS_ORE("背包中有矿物", 2, ConditionType.HAS_ORE),
+        HAS_TOOL("背包中有工具", 2, ConditionType.HAS_TOOL),
+        CRAFT_ITEM("合成物品", 2, ConditionType.CRAFT_ITEM);
 
         private final String displayName;
         private final int difficultyTier;
+        private final ConditionType conditionMirror;
 
         TaskType(String displayName, int difficultyTier) {
+            this(displayName, difficultyTier, null);
+        }
+
+        TaskType(String displayName, int difficultyTier, ConditionType conditionMirror) {
             this.displayName = displayName;
             this.difficultyTier = difficultyTier;
+            this.conditionMirror = conditionMirror;
         }
 
         public String displayName() {
@@ -72,6 +105,22 @@ public final class TaskManager {
 
         public int difficultyTier() {
             return difficultyTier;
+        }
+
+        public ConditionType conditionMirror() {
+            return conditionMirror;
+        }
+
+        public static TaskType fromCondition(ConditionType conditionType) {
+            if (conditionType == null) {
+                return null;
+            }
+            for (TaskType type : values()) {
+                if (conditionType == type.conditionMirror) {
+                    return type;
+                }
+            }
+            return null;
         }
     }
 
@@ -172,12 +221,29 @@ public final class TaskManager {
             return;
         }
 
-        switch (conditionType) {
-            case JUMP -> markProgress(player, TaskType.JUMP);
-            case EAT_FOOD -> markProgress(player, TaskType.EAT_ANY);
-            case ENTER_WATER -> markProgress(player, TaskType.SWIM);
-            default -> {
-            }
+        TaskType taskType = TaskType.fromCondition(conditionType);
+        if (taskType != null) {
+            markProgress(player, taskType);
+        }
+    }
+
+    public void pollStateTaskProgress(Player player, ConditionStateEvaluator evaluator) {
+        if (!isEnabled() || !hasActiveTask() || evaluator == null) {
+            return;
+        }
+
+        GlobalTask task = currentTask;
+        if (task == null) {
+            return;
+        }
+
+        ConditionType mirror = task.taskType().conditionMirror();
+        if (mirror == null || !mirror.isStatePolled()) {
+            return;
+        }
+
+        if (evaluator.matches(player, mirror)) {
+            markProgress(player, task.taskType());
         }
     }
 
@@ -287,6 +353,8 @@ public final class TaskManager {
                 }
             }
         }
+
+        markProgress(player, TaskType.CRAFT_ITEM);
     }
 
     public void handleInteractBlock(Player player, Material blockType) {
@@ -318,6 +386,7 @@ public final class TaskManager {
             case SMOOTH_STONE -> markProgress(player, TaskType.STAND_ON_SMOOTH_STONE);
             case POLISHED_GRANITE -> markProgress(player, TaskType.STAND_ON_POLISHED_GRANITE);
             case POLISHED_DIORITE -> markProgress(player, TaskType.STAND_ON_POLISHED_DIORITE);
+            case GRASS_BLOCK -> markProgress(player, TaskType.STAND_ON_GRASS_BLOCK);
             default -> {
             }
         }

@@ -154,3 +154,8 @@ powerups:
 result-scoring:
   placement-weight: 10
   task-points-weight: 1
+
+conditions:
+  poll-interval-ticks: 5
+  stop-moving-idle-seconds: 3
+  stop-moving-horizontal-threshold: 0.01

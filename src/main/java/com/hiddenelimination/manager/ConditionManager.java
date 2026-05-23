@@ -1,16 +1,20 @@
 package com.hiddenelimination.manager;
 
 import com.hiddenelimination.HiddenEliminationPlugin;
+import com.hiddenelimination.condition.ConditionStateEvaluator;
 import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
+import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
@@ -32,14 +36,19 @@ public final class ConditionManager {
     private TaskManager taskManager;
     private PowerupManager powerupManager;
     private BukkitTask revealTask;
+    private BukkitTask conditionPollTask;
     private long revealIntervalSeconds = 180L;
     private long nextRevealEpochSecond = 0L;
     private static final long RULE_ENABLE_DELAY_MILLIS = 3000L;
+
+    private final Map<UUID, Long> lastMoveMillisByPlayer = new HashMap<>();
+    private final ConditionStateEvaluator stateEvaluator;
 
     public ConditionManager(HiddenEliminationPlugin plugin, PlayerDataManager playerDataManager, UIManager uiManager) {
         this.plugin = plugin;
         this.playerDataManager = playerDataManager;
         this.uiManager = uiManager;
+        this.stateEvaluator = new ConditionStateEvaluator(plugin, lastMoveMillisByPlayer);
     }
 
     public void bindGameManager(GameManager gameManager) {
@@ -61,10 +70,12 @@ public final class ConditionManager {
     public void assignHiddenConditions(List<Player> players) {
         revealedConditions.clear();
         triggeredConditions.clear();
+        lastMoveMillisByPlayer.clear();
 
         List<ConditionType> pool = new ArrayList<>(List.of(ConditionType.values()));
         Collections.shuffle(pool, random);
 
+        long now = System.currentTimeMillis();
         for (int i = 0; i < players.size(); i++) {
             Player player = players.get(i);
             PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());
@@ -73,6 +84,7 @@ public final class ConditionManager {
             data.setAssignedCondition(uniqueCondition);
             data.setConditionRevealed(false);
             data.setConditionActiveAtMillis(0L);
+            lastMoveMillisByPlayer.put(player.getUniqueId(), now);
 
             uiManager.info(player, "你的隐藏淘汰条件已分配。");
         }
@@ -94,6 +106,7 @@ public final class ConditionManager {
                 intervalTicks,
                 intervalTicks
         );
+        startConditionPoll();
     }
 
     public void stopRevealTask() {
@@ -102,6 +115,60 @@ public final class ConditionManager {
             revealTask = null;
         }
         nextRevealEpochSecond = 0L;
+        stopConditionPoll();
+    }
+
+    public void recordPlayerMovement(Player player, Location from, Location to) {
+        stateEvaluator.recordMovement(player, from, to);
+    }
+
+    private void startConditionPoll() {
+        stopConditionPoll();
+        long intervalTicks = Math.max(1L, plugin.getConfig().getLong("conditions.poll-interval-ticks", 5L));
+        conditionPollTask = plugin.getServer().getScheduler().runTaskTimer(
+                plugin,
+                this::pollStateConditions,
+                intervalTicks,
+                intervalTicks
+        );
+    }
+
+    private void stopConditionPoll() {
+        if (conditionPollTask != null) {
+            conditionPollTask.cancel();
+            conditionPollTask = null;
+        }
+    }
+
+    private void pollStateConditions() {
+        if (gameManager == null || !gameManager.isRunning()) {
+            return;
+        }
+
+        for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
+            Player player = plugin.getServer().getPlayer(playerId);
+            if (player == null || !player.isOnline()) {
+                continue;
+            }
+
+            PlayerGameData data = playerDataManager.get(playerId);
+            if (data == null || data.isEliminated() || !data.isConditionRevealed()) {
+                continue;
+            }
+
+            ConditionType assigned = data.getAssignedCondition();
+            if (assigned == null || !assigned.isStatePolled()) {
+                continue;
+            }
+
+            if (stateEvaluator.matches(player, assigned)) {
+                handleConditionTrigger(player, assigned);
+            }
+
+            if (taskManager != null) {
+                taskManager.pollStateTaskProgress(player, stateEvaluator);
+            }
+        }
     }
 
     public void revealFakeCondition(ConditionType conditionType) {
