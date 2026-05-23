@@ -60,7 +60,7 @@ public final class TaskManager {
         STAND_ON_POLISHED_DIORITE("站在磨制闪长岩上", 2),
 
         EAT_FOOD("进食", 1, ConditionType.EAT_FOOD),
-        ATTACK_PLAYER("攻击玩家", 3, ConditionType.ATTACK_PLAYER),
+        ATTACK_PLAYER("攻击玩家", 2, ConditionType.ATTACK_PLAYER),
         BREAK_BLOCK("破坏方块", 1, ConditionType.BREAK_BLOCK),
         PLACE_BLOCK("放置方块", 1, ConditionType.PLACE_BLOCK),
         SPRINT("开始冲刺", 1, ConditionType.SPRINT),
