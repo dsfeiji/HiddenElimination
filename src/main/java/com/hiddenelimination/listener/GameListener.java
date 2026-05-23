@@ -4,6 +4,7 @@ import com.hiddenelimination.manager.ConditionManager;
 import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.SpawnManager;
 import com.hiddenelimination.manager.TaskManager;
+import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.model.ConditionType;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -52,12 +53,14 @@ public final class GameListener implements Listener {
     private final ConditionManager conditionManager;
     private final SpawnManager spawnManager;
     private final TaskManager taskManager;
+    private final TeamManager teamManager;
 
-    public GameListener(GameManager gameManager, ConditionManager conditionManager, SpawnManager spawnManager, TaskManager taskManager) {
+    public GameListener(GameManager gameManager, ConditionManager conditionManager, SpawnManager spawnManager, TaskManager taskManager, TeamManager teamManager) {
         this.gameManager = gameManager;
         this.conditionManager = conditionManager;
         this.spawnManager = spawnManager;
         this.taskManager = taskManager;
+        this.teamManager = teamManager;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -73,7 +76,7 @@ public final class GameListener implements Listener {
         conditionManager.handleConditionTrigger(event.getPlayer(), ConditionType.JUMP);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerAttack(EntityDamageByEntityEvent event) {
         if (!gameManager.isRunning()) {
             return;
@@ -84,7 +87,15 @@ public final class GameListener implements Listener {
             return;
         }
 
-        if (event.getEntity() instanceof Player) {
+        if (event.getEntity() instanceof Player victim) {
+            if (teamManager != null && teamManager.isTeamMode() && !isTeamFriendlyFireEnabled()) {
+                int attackerTeam = teamManager.getTeamIdForPlayer(attacker.getUniqueId());
+                int victimTeam = teamManager.getTeamIdForPlayer(victim.getUniqueId());
+                if (attackerTeam >= 0 && attackerTeam == victimTeam) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
             conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_PLAYER);
             return;
         }
@@ -278,6 +289,9 @@ public final class GameListener implements Listener {
             if (player.hasPermission("hiddenelimination.admin") || player.isOp()) {
                 player.getInventory().setItem(PrepareItemListener.START_ITEM_SLOT, PrepareItemListener.createStartItem());
             }
+            if (teamManager != null) {
+                teamManager.giveTeamCompass(player);
+            }
         }, 2L);
     }
 
@@ -463,5 +477,10 @@ public final class GameListener implements Listener {
             return player.getInventory().getBoots() == null;
         }
         return false;
+    }
+
+    private boolean isTeamFriendlyFireEnabled() {
+        return JavaPlugin.getProvidingPlugin(GameListener.class)
+                .getConfig().getBoolean("game.team-friendly-fire", false);
     }
 }

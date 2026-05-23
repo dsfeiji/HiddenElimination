@@ -2,8 +2,10 @@ package com.hiddenelimination.manager;
 
 import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.listener.PrepareItemListener;
+import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.GameState;
 import com.hiddenelimination.model.PlayerGameData;
+import com.hiddenelimination.model.TeamData;
 import org.bukkit.ChatColor;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -40,6 +42,7 @@ public final class GameManager {
     private final ConditionManager conditionManager;
     private final TaskManager taskManager;
     private final PowerupManager powerupManager;
+    private TeamManager teamManager;
     private LobbyPanelManager lobbyPanelManager;
 
     private final Set<UUID> activePlayers = ConcurrentHashMap.newKeySet();
@@ -112,6 +115,18 @@ public final class GameManager {
         this.lobbyPanelManager = lobbyPanelManager;
     }
 
+    public void bindTeamManager(TeamManager teamManager) {
+        this.teamManager = teamManager;
+    }
+
+    public boolean isTeamMode() {
+        return teamManager != null && teamManager.isTeamMode();
+    }
+
+    public TeamManager getTeamManager() {
+        return teamManager;
+    }
+
     public int getRoundInitialLives() {
         if (lobbyInitialLivesOverride > 0) {
             return lobbyInitialLivesOverride;
@@ -178,6 +193,14 @@ public final class GameManager {
             return false;
         }
 
+        if (isTeamMode()) {
+            String teamError = teamManager.validateForStart(readyPlayers);
+            if (teamError != null) {
+                uiManager.error(starter, "组队校验失败：" + teamError);
+                return false;
+            }
+        }
+
         int conditionPoolSize = conditionManager.getConditionPoolSize();
         if (readyPlayers.size() > conditionPoolSize) {
             uiManager.error(starter, "准备人数超过可分配条件数量（最多 " + conditionPoolSize + " 人）。");
@@ -229,6 +252,10 @@ public final class GameManager {
             player.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 20 * 20, 1, false, false, true));
         }
         conditionManager.assignHiddenConditions(readyPlayers);
+
+        if (isTeamMode()) {
+            teamManager.rebuildActiveTeams();
+        }
 
         gameState = GameState.RUNNING;
         conditionManager.startRevealTask(getRoundRevealIntervalSeconds());
@@ -295,6 +322,47 @@ public final class GameManager {
         }
     }
 
+    public void eliminatePlayerSilent(Player player, String reason) {
+        UUID playerId = player.getUniqueId();
+        if (!activePlayers.contains(playerId)) {
+            return;
+        }
+
+        PlayerGameData data = playerDataManager.get(playerId);
+        if (data == null || data.isEliminated()) {
+            return;
+        }
+
+        data.setEliminated(true);
+        data.setSpectator(true);
+        data.setEliminatedAtMillis(System.currentTimeMillis());
+        eliminationOrder.add(playerId);
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> {
+            if (player.isOnline()) {
+                player.setGameMode(GameMode.SPECTATOR);
+            }
+        });
+
+        uiManager.info(player, "你被淘汰，原因：" + reason);
+    }
+
+    public void eliminateEntireTeam(int teamId, UUID triggerPlayerId, ConditionType triggeredCondition) {
+        if (!isTeamMode() || teamManager == null) {
+            return;
+        }
+        teamManager.eliminateEntireTeam(teamId, triggerPlayerId, triggeredCondition);
+        checkWinCondition();
+    }
+
+    public void eliminateEntireTeam(TeamData team, Player triggerPlayer, ConditionType triggeredCondition) {
+        if (!isTeamMode() || teamManager == null) {
+            return;
+        }
+        teamManager.eliminateEntireTeam(team.getTeamId(), triggerPlayer.getUniqueId(), triggeredCondition);
+        checkWinCondition();
+    }
+
     public void handleQuit(Player player) {
         if (gameState != GameState.RUNNING) {
             return;
@@ -318,6 +386,16 @@ public final class GameManager {
 
     private void checkWinCondition() {
         if (gameState != GameState.RUNNING) {
+            return;
+        }
+
+        if (isTeamMode() && teamManager != null) {
+            TeamData winner = teamManager.getOnlyAliveTeam();
+            if (winner == null) {
+                return;
+            }
+            uiManager.showCenterTitleToAll("游戏结束", "5秒后返回重生点");
+            finishGameTeam(winner, 5L);
             return;
         }
 
@@ -345,6 +423,57 @@ public final class GameManager {
             return;
         }
         finishGame(winner, null, 0L);
+    }
+
+    private void finishGameTeam(TeamData winningTeam, long cleanupDelaySeconds) {
+        gameState = GameState.ENDING;
+
+        conditionManager.stopRevealTask();
+        powerupManager.stopRound();
+        taskManager.stopRound();
+        stopBorderShrink();
+        cancelRoundEndTask();
+
+        List<TeamStanding> standings = buildTeamStandings();
+
+        String teamName = winningTeam.getColoredDisplayName();
+        uiManager.showCenterTitleToAll(teamName + ChatColor.RESET + " 获胜！", "");
+        uiManager.broadcast(ChatColor.GOLD + "[结算] 团队对抗排名规则：存活队员数 > 存活时长 > 完成任务数 > 累积积分。");
+
+        if (!standings.isEmpty()) {
+            uiManager.broadcast("本局团队排行榜：");
+            for (int i = 0; i < standings.size(); i++) {
+                TeamStanding s = standings.get(i);
+                uiManager.broadcast(ChatColor.YELLOW + "#" + (i + 1) + " "
+                        + s.teamColor() + s.teamName() + ChatColor.RESET
+                        + ChatColor.GRAY + "（存活=" + ChatColor.GREEN + (s.totalMembers() - s.eliminatedMembers()) + "/" + s.totalMembers()
+                        + ChatColor.GRAY + "，存活时长=" + ChatColor.GREEN + formatDuration(s.totalSurvivalSeconds() / Math.max(1, s.totalMembers()))
+                        + ChatColor.GRAY + "，任务完成=" + ChatColor.AQUA + s.totalCompletedTasks()
+                        + ChatColor.GRAY + "，积分=" + ChatColor.LIGHT_PURPLE + s.totalTeamPoints()
+                        + ChatColor.GRAY + "）");
+                List<String> memberNames = s.memberNames();
+                if (!memberNames.isEmpty()) {
+                    uiManager.broadcast(ChatColor.GRAY + "  成员：" + String.join(", ", memberNames));
+                }
+            }
+        }
+
+        uiManager.playSoundToAll(Sound.UI_TOAST_CHALLENGE_COMPLETE, 0.9F, 1.0F);
+        uiManager.broadcast(ChatColor.GOLD + "[结算] 本场玩家规则清单：");
+        for (UUID playerId : activePlayers) {
+            PlayerGameData data = playerDataManager.get(playerId);
+            if (data == null) {
+                continue;
+            }
+            String condition = data.getAssignedCondition() == null ? "未分配" : data.getAssignedCondition().getDisplayName();
+            String status = data.isConditionRevealed() ? "已公开" : "未公开";
+            String triggered = data.isEliminated() ? "已触发/淘汰" : "未触发";
+            uiManager.broadcast(ChatColor.GRAY + "- " + ChatColor.WHITE + resolvePlayerName(playerId)
+                    + ChatColor.GRAY + " -> " + ChatColor.GREEN + condition
+                    + ChatColor.DARK_GRAY + "（" + status + "，" + triggered + "）");
+        }
+
+        doFinishCleanup(cleanupDelaySeconds);
     }
 
     public void finishGame(Player winner, String forcedReason) {
@@ -416,6 +545,10 @@ public final class GameManager {
                     + ChatColor.DARK_GRAY + "（" + status + "，" + triggered + "）");
         }
 
+        doFinishCleanup(cleanupDelaySeconds);
+    }
+
+    private void doFinishCleanup(long cleanupDelaySeconds) {
         Set<UUID> needBack = new HashSet<>(activePlayers);
         for (Player joined : playerDataManager.getJoinedOnlinePlayers()) {
             needBack.add(joined.getUniqueId());
@@ -451,6 +584,9 @@ public final class GameManager {
             activePlayers.clear();
             eliminationOrder.clear();
             survivalBonusMillisByPlayer.clear();
+            if (teamManager != null) {
+                teamManager.roundFinished();
+            }
             gameState = GameState.WAITING;
             spawnManager.onRoundFinished();
         };
@@ -461,6 +597,67 @@ public final class GameManager {
         }
 
         uiManager.broadcast(plugin.getConfig().getString("messages.game-end", "本局结束。"));
+    }
+
+    private List<TeamStanding> buildTeamStandings() {
+        if (teamManager == null) {
+            return List.of();
+        }
+
+        List<TeamData> teams = teamManager.getActiveTeams();
+        if (teams.isEmpty()) {
+            return List.of();
+        }
+
+        List<TeamStanding> teamStandings = new ArrayList<>();
+        long now = System.currentTimeMillis();
+
+        for (TeamData team : teams) {
+            long totalSurvivalSeconds = 0L;
+            int totalCompletedTasks = 0;
+            int totalPoints = team.getTeamPoints();
+            int eliminatedMembers = 0;
+            List<String> memberNames = new ArrayList<>();
+
+            for (UUID memberId : team.getMemberIds()) {
+                PlayerGameData data = playerDataManager.get(memberId);
+                if (data == null) {
+                    continue;
+                }
+                long roundStart = data.getRoundStartMillis();
+                long end = now;
+                if (data.getEliminatedAtMillis() > 0L) {
+                    end = data.getEliminatedAtMillis();
+                }
+                totalSurvivalSeconds += Math.max(0L, (end - roundStart) / 1000L);
+                totalCompletedTasks += data.getCompletedTaskCount();
+                totalPoints += data.getTotalEarnedTaskPoints();
+                if (data.isEliminated()) {
+                    eliminatedMembers++;
+                }
+                memberNames.add(resolvePlayerName(memberId));
+            }
+
+            teamStandings.add(new TeamStanding(
+                    team.getTeamId(),
+                    team.getDisplayName(),
+                    team.getTeamColor(),
+                    team.getTotalCount(),
+                    eliminatedMembers,
+                    totalSurvivalSeconds,
+                    totalCompletedTasks,
+                    totalPoints,
+                    memberNames
+            ));
+        }
+
+        teamStandings.sort(Comparator
+                .comparingInt((TeamStanding t) -> t.totalMembers() - t.eliminatedMembers()).reversed()
+                .thenComparing(Comparator.comparingLong(TeamStanding::totalSurvivalSeconds).reversed())
+                .thenComparing(Comparator.comparingInt(TeamStanding::totalCompletedTasks).reversed())
+                .thenComparingInt(TeamStanding::totalTeamPoints).reversed());
+
+        return teamStandings;
     }
 
     private void revokeAllAdvancementsForAllOnlinePlayers() {
@@ -644,6 +841,9 @@ public final class GameManager {
         if (player.hasPermission("hiddenelimination.admin") || player.isOp()) {
             player.getInventory().setItem(PrepareItemListener.START_ITEM_SLOT, PrepareItemListener.createStartItem());
         }
+        if (teamManager != null) {
+            teamManager.giveTeamCompass(player);
+        }
     }
 
     private List<FinalStanding> buildFinalStandings() {
@@ -721,6 +921,19 @@ public final class GameManager {
             int completedTasks,
             int totalEarnedTaskPoints,
             boolean aliveAtEnd
+    ) {
+    }
+
+    private record TeamStanding(
+            int teamId,
+            String teamName,
+            org.bukkit.ChatColor teamColor,
+            int totalMembers,
+            int eliminatedMembers,
+            long totalSurvivalSeconds,
+            int totalCompletedTasks,
+            int totalTeamPoints,
+            List<String> memberNames
     ) {
     }
 }

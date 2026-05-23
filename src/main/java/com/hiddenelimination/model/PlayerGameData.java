@@ -21,6 +21,9 @@ public final class PlayerGameData {
     /** 是否已切换旁观 */
     private boolean spectator;
 
+    /** 团队 ID，-1 表示未组队/个人模式 */
+    private int teamId = -1;
+
     /** 分配到的隐藏淘汰条件 */
     private ConditionType assignedCondition;
 
@@ -59,6 +62,7 @@ public final class PlayerGameData {
         this.taskLivesRemaining = 0;
         this.roundStartMillis = 0L;
         this.eliminatedAtMillis = 0L;
+        this.teamId = -1;
     }
 
     public UUID getPlayerId() {
@@ -95,6 +99,14 @@ public final class PlayerGameData {
 
     public void setSpectator(boolean spectator) {
         this.spectator = spectator;
+    }
+
+    public int getTeamId() {
+        return teamId;
+    }
+
+    public void setTeamId(int teamId) {
+        this.teamId = teamId;
     }
 
     public ConditionType getAssignedCondition() {

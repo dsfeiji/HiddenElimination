@@ -2,6 +2,7 @@ package com.hiddenelimination.manager;
 
 import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.model.GameState;
+import com.hiddenelimination.model.TeamData;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.title.Title;
 import org.bukkit.Bukkit;
@@ -29,6 +30,7 @@ public final class UIManager {
     private GameManager gameManager;
     private ConditionManager conditionManager;
     private TaskManager taskManager;
+    private TeamManager teamManager;
 
     private BukkitTask uiTask;
     private static final int RULES_PAGE_SIZE = 4;
@@ -48,6 +50,10 @@ public final class UIManager {
         this.gameManager = gameManager;
         this.conditionManager = conditionManager;
         this.taskManager = taskManager;
+    }
+
+    public void bindTeamManager(TeamManager teamManager) {
+        this.teamManager = teamManager;
     }
 
     public String prefix() {
@@ -181,16 +187,18 @@ public final class UIManager {
         long ready = playerDataManager.getReadyCount();
         long joined = playerDataManager.getJoinedCount();
 
-        List<String> lines = List.of(
-                ChatColor.GRAY + "----------------",
-                ChatColor.YELLOW + "模式: " + ChatColor.WHITE + "大厅",
-                ChatColor.YELLOW + "在线: " + ChatColor.GREEN + online,
-                ChatColor.YELLOW + "已加入: " + ChatColor.AQUA + joined,
-                ChatColor.YELLOW + "已准备: " + ChatColor.GREEN + ready,
-                ChatColor.DARK_GRAY + " ",
-                ChatColor.GRAY + "右键绿色染料切换准备",
-                ChatColor.GRAY + "----------------"
-        );
+        List<String> lines = new ArrayList<>();
+        lines.add(ChatColor.GRAY + "----------------");
+        String mode = (teamManager != null && teamManager.isTeamMode())
+                ? ChatColor.LIGHT_PURPLE + "团队对抗"
+                : ChatColor.WHITE + "个人混战";
+        lines.add(ChatColor.YELLOW + "模式: " + mode);
+        lines.add(ChatColor.YELLOW + "在线: " + ChatColor.GREEN + online);
+        lines.add(ChatColor.YELLOW + "已加入: " + ChatColor.AQUA + joined);
+        lines.add(ChatColor.YELLOW + "已准备: " + ChatColor.GREEN + ready);
+        lines.add(ChatColor.DARK_GRAY + " ");
+        lines.add(ChatColor.GRAY + "右键绿色染料切换准备");
+        lines.add(ChatColor.GRAY + "----------------");
 
         applyLines(objective, lines);
         player.setScoreboard(board);
@@ -241,6 +249,17 @@ public final class UIManager {
         String text = ChatColor.GOLD + "下次公开规则: " + ChatColor.YELLOW + formatSeconds(ruleRemain)
                 + ChatColor.DARK_GRAY + " | " + taskText
                 + ChatColor.DARK_GRAY + " | " + livesText;
+
+        if (teamManager != null && teamManager.isTeamMode()) {
+            TeamData team = teamManager.getPlayerTeam(player.getUniqueId());
+            if (team != null) {
+                text = team.getTeamColor() + team.getDisplayName() + ChatColor.DARK_GRAY
+                        + " [" + ChatColor.WHITE + team.getAliveCount() + "/" + team.getTotalCount()
+                        + ChatColor.DARK_GRAY + "] 积分:" + ChatColor.LIGHT_PURPLE + team.getTeamPoints()
+                        + ChatColor.DARK_GRAY + " | " + text;
+            }
+        }
+
         player.sendActionBar(Component.text(text));
     }
 
@@ -278,11 +297,21 @@ public final class UIManager {
 
     private void updateTabPlayerPoints() {
         for (Player online : Bukkit.getOnlinePlayers()) {
+            String name = online.getName();
+            String teamPrefix = "";
+            if (teamManager != null && teamManager.isTeamMode()) {
+                int teamId = teamManager.getTeamIdForPlayer(online.getUniqueId());
+                if (teamId >= 0) {
+                    teamPrefix = teamManager.getTeamColor(teamId) + TeamManager.getTeamName(teamId)
+                            + ChatColor.RESET + " ";
+                }
+            }
+
             if (gameManager != null && gameManager.isRunning()) {
                 int points = taskManager.getPlayerTaskPoints(online.getUniqueId());
-                online.setPlayerListName(ChatColor.WHITE + online.getName() + ChatColor.GRAY + " [" + points + "]");
+                online.setPlayerListName(teamPrefix + ChatColor.WHITE + name + ChatColor.GRAY + " [" + points + "]");
             } else {
-                online.setPlayerListName(ChatColor.WHITE + online.getName());
+                online.setPlayerListName(teamPrefix + ChatColor.WHITE + name);
             }
         }
     }

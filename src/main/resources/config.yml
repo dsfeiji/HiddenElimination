@@ -44,11 +44,19 @@ lobby-settings-panel:
 
 game:
   world: he_game
+  mode: free_for_all
   min-ready-players: 2
   spread-radius: 200
-  reveal-interval-seconds: 120
+  reveal-interval-seconds: 60
   # 0 表示不限时
   round-duration-seconds: 0
+
+  # 团队模式配置（mode 设为 team 时生效）
+  team-max-size: 4
+  min-team-size: 2
+  min-teams: 2
+  team-friendly-fire: false
+  available-team-count: 6
 
   # 每局使用预生成的全新原版随机世界；启动时先准备第一张，开局后后台继续准备下一张
   reset-world-each-round: true
@@ -68,8 +76,8 @@ game:
 
 world-border:
   enabled: true
-  start-size: 700.0
-  end-size: 120.0
+  start-size: 200.0
+  end-size: 10.0
   start-delay-seconds: 60
   shrink-duration-seconds: 720
   announce-interval-seconds: 60
@@ -91,12 +99,12 @@ tasks:
   # 标准档：前4轮仅难度1，随后按间隔升级
   easy-only-task-count: 4
   difficulty-upgrade-interval-seconds: 480
-  lives-per-player: 3
-  failure-point-penalty: 4
+  lives-per-player: 4
+  failure-point-penalty: 1
 
   time-limit-seconds:
-    easy: 90
-    medium: 75
+    easy: 60
+    medium: 60
     hard: 60
 
   points:

@@ -4,6 +4,7 @@ import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.condition.ConditionStateEvaluator;
 import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
+import com.hiddenelimination.model.TeamData;
 import org.bukkit.Location;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
@@ -35,6 +36,7 @@ public final class ConditionManager {
     private GameManager gameManager;
     private TaskManager taskManager;
     private PowerupManager powerupManager;
+    private TeamManager teamManager;
     private BukkitTask revealTask;
     private BukkitTask conditionPollTask;
     private long revealIntervalSeconds = 180L;
@@ -61,6 +63,10 @@ public final class ConditionManager {
 
     public void bindPowerupManager(PowerupManager powerupManager) {
         this.powerupManager = powerupManager;
+    }
+
+    public void bindTeamManager(TeamManager teamManager) {
+        this.teamManager = teamManager;
     }
 
     public int getConditionPoolSize() {
@@ -231,6 +237,20 @@ public final class ConditionManager {
 
         if (taskManager != null) {
             taskManager.handleConditionAction(player, actionType);
+        }
+
+        if (teamManager != null && teamManager.isTeamMode()) {
+            if (teamManager.doesTriggerEliminateTeam(playerId, actionType)) {
+                TeamData team = teamManager.getPlayerTeam(playerId);
+                if (team != null && powerupManager != null && powerupManager.consumeShieldIfActive(player)) {
+                    return false;
+                }
+                if (team != null) {
+                    gameManager.eliminateEntireTeam(team, player, actionType);
+                    triggeredConditions.add(actionType);
+                    return true;
+                }
+            }
         }
 
         if (!data.isConditionRevealed()) {

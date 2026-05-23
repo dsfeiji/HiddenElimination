@@ -14,6 +14,7 @@ import com.hiddenelimination.manager.PlayerDataManager;
 import com.hiddenelimination.manager.PowerupManager;
 import com.hiddenelimination.manager.SpawnManager;
 import com.hiddenelimination.manager.TaskManager;
+import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.manager.UIManager;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -30,6 +31,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
     private PowerupManager powerupManager;
     private GameManager gameManager;
     private TaskManager taskManager;
+    private TeamManager teamManager;
     private LobbyPanelManager lobbyPanelManager;
 
     @Override
@@ -39,6 +41,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         this.playerDataManager = new PlayerDataManager();
         this.uiManager = new UIManager(this);
         this.spawnManager = new SpawnManager(this);
+        this.teamManager = new TeamManager(this, playerDataManager, uiManager);
         this.taskManager = new TaskManager(this, playerDataManager, uiManager);
         this.conditionManager = new ConditionManager(this, playerDataManager, uiManager);
         this.powerupManager = new PowerupManager(this, playerDataManager, uiManager);
@@ -53,15 +56,21 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         );
         this.lobbyPanelManager = new LobbyPanelManager(this, spawnManager, gameManager, uiManager);
 
+        this.teamManager.bindGameManager(gameManager);
         this.conditionManager.bindTaskManager(taskManager);
         this.conditionManager.bindPowerupManager(powerupManager);
+        this.conditionManager.bindTeamManager(teamManager);
         this.taskManager.bindGameManager(gameManager);
         this.taskManager.bindPowerupManager(powerupManager);
+        this.taskManager.bindTeamManager(teamManager);
         this.powerupManager.bindGameManager(gameManager);
         this.powerupManager.bindConditionManager(conditionManager);
         this.powerupManager.bindTaskManager(taskManager);
+        this.powerupManager.bindTeamManager(teamManager);
         this.uiManager.bindManagers(playerDataManager, gameManager, conditionManager, taskManager);
+        this.uiManager.bindTeamManager(teamManager);
         this.gameManager.bindLobbyPanelManager(lobbyPanelManager);
+        this.gameManager.bindTeamManager(teamManager);
 
         registerCommand();
         registerListeners();
@@ -95,22 +104,22 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
             return;
         }
 
-        HECommand command = new HECommand(playerDataManager, uiManager, spawnManager, gameManager, lobbyPanelManager);
+        HECommand command = new HECommand(this, playerDataManager, uiManager, spawnManager, gameManager, lobbyPanelManager, teamManager);
         heCommand.setExecutor(command);
         heCommand.setTabCompleter(command);
     }
 
     private void registerListeners() {
         getServer().getPluginManager().registerEvents(
-                new PrepareItemListener(playerDataManager, gameManager, uiManager),
+                new PrepareItemListener(playerDataManager, gameManager, uiManager, teamManager),
                 this
         );
         getServer().getPluginManager().registerEvents(
-                new PlayerJoinQuitListener(this, playerDataManager, spawnManager, uiManager, gameManager, lobbyPanelManager),
+                new PlayerJoinQuitListener(this, playerDataManager, spawnManager, uiManager, gameManager, lobbyPanelManager, teamManager),
                 this
         );
         getServer().getPluginManager().registerEvents(
-                new GameListener(gameManager, conditionManager, spawnManager, taskManager),
+                new GameListener(gameManager, conditionManager, spawnManager, taskManager, teamManager),
                 this
         );
         getServer().getPluginManager().registerEvents(

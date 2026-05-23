@@ -1,9 +1,11 @@
 package com.hiddenelimination.command;
 
+import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.LobbyPanelManager;
 import com.hiddenelimination.manager.PlayerDataManager;
 import com.hiddenelimination.manager.SpawnManager;
+import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.manager.UIManager;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.command.Command;
@@ -16,6 +18,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -25,27 +28,37 @@ public final class HECommand implements CommandExecutor, TabCompleter {
 
     private static final List<String> SUB_COMMANDS = Arrays.asList(
             "join", "leave", "ready", "unready", "start", "stop", "status", "setlobby",
-            "setlives", "setduration", "setreveal", "panel", "help"
+            "setlives", "setduration", "setreveal", "setmode", "team", "panel", "help"
     );
 
+    private static final List<String> TEAM_SUB_COMMANDS = Arrays.asList(
+            "join", "leave", "info", "list"
+    );
+
+    private final HiddenEliminationPlugin plugin;
     private final PlayerDataManager playerDataManager;
     private final UIManager uiManager;
     private final SpawnManager spawnManager;
     private final GameManager gameManager;
     private final LobbyPanelManager lobbyPanelManager;
+    private final TeamManager teamManager;
 
     public HECommand(
+            HiddenEliminationPlugin plugin,
             PlayerDataManager playerDataManager,
             UIManager uiManager,
             SpawnManager spawnManager,
             GameManager gameManager,
-            LobbyPanelManager lobbyPanelManager
+            LobbyPanelManager lobbyPanelManager,
+            TeamManager teamManager
     ) {
+        this.plugin = plugin;
         this.playerDataManager = playerDataManager;
         this.uiManager = uiManager;
         this.spawnManager = spawnManager;
         this.gameManager = gameManager;
         this.lobbyPanelManager = lobbyPanelManager;
+        this.teamManager = teamManager;
     }
 
     @Override
@@ -73,6 +86,8 @@ public final class HECommand implements CommandExecutor, TabCompleter {
             case "setlives" -> handleSetLives(player, args);
             case "setduration" -> handleSetDuration(player, args);
             case "setreveal" -> handleSetReveal(player, args);
+            case "setmode" -> handleSetMode(player, args);
+            case "team" -> handleTeam(player, args);
             case "panel" -> handlePanel(player, args);
             default -> sendHelp(sender);
         }
@@ -85,6 +100,24 @@ public final class HECommand implements CommandExecutor, TabCompleter {
         if (args.length == 1) {
             String current = args[0].toLowerCase(Locale.ROOT);
             return SUB_COMMANDS.stream().filter(s -> s.startsWith(current)).collect(Collectors.toList());
+        }
+        if (args.length == 2 && "team".equalsIgnoreCase(args[0])) {
+            String current = args[1].toLowerCase(Locale.ROOT);
+            return TEAM_SUB_COMMANDS.stream()
+                    .filter(s -> s.startsWith(current))
+                    .collect(Collectors.toList());
+        }
+        if (args.length == 3 && "team".equalsIgnoreCase(args[0]) && "join".equalsIgnoreCase(args[1])) {
+            String current = args[2].toLowerCase(Locale.ROOT);
+            return Arrays.asList("red", "blue", "green", "yellow", "gold", "aqua").stream()
+                    .filter(s -> s.startsWith(current))
+                    .collect(Collectors.toList());
+        }
+        if (args.length == 2 && "setmode".equalsIgnoreCase(args[0])) {
+            String current = args[1].toLowerCase(Locale.ROOT);
+            return Arrays.asList("ffa", "team").stream()
+                    .filter(s -> s.startsWith(current))
+                    .collect(Collectors.toList());
         }
         if (args.length == 2 && "panel".equalsIgnoreCase(args[0])) {
             String current = args[1].toLowerCase(Locale.ROOT);
@@ -117,6 +150,14 @@ public final class HECommand implements CommandExecutor, TabCompleter {
         if (gameManager.isRunning()) {
             uiManager.error(player, "游戏进行中，无法修改准备状态");
             return;
+        }
+
+        if (ready && teamManager != null && teamManager.isTeamMode()) {
+            int teamId = teamManager.getTeamIdForPlayer(player.getUniqueId());
+            if (teamId < 0) {
+                uiManager.warn(player, "团队模式下请先选择队伍再准备");
+                return;
+            }
         }
 
         PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());
@@ -243,8 +284,79 @@ public final class HECommand implements CommandExecutor, TabCompleter {
         sender.sendMessage("/he setlives <n> - 设置本局初始命数（管理员）");
         sender.sendMessage("/he setduration <sec> - 设置本局总时长，0不限时（管理员）");
         sender.sendMessage("/he setreveal <sec> - 设置本局规则揭示间隔（管理员）");
+        sender.sendMessage("/he setmode <ffa|team> - 切换游戏模式（管理员）");
+        sender.sendMessage("/he team join <颜色> - 加入队伍（red/blue/green/yellow/gold/aqua）");
+        sender.sendMessage("/he team leave - 离开队伍");
+        sender.sendMessage("/he team info - 查看本队信息");
+        sender.sendMessage("/he team list - 查看所有队伍");
         sender.sendMessage("/he panel <sethere|rebuild|cleanup> - 管理大厅交互设置面板（管理员）");
         sender.sendMessage("/he status - 查看当前状态");
+    }
+
+    private void handleSetMode(Player player, String[] args) {
+        if (!player.hasPermission("hiddenelimination.admin") && !player.isOp()) {
+            uiManager.error(player, "你没有权限切换游戏模式");
+            return;
+        }
+        if (args.length < 2) {
+            uiManager.warn(player, "用法：/he setmode <ffa|team>");
+            return;
+        }
+        String mode = args[1].toLowerCase(Locale.ROOT);
+        if (!"ffa".equals(mode) && !"team".equals(mode)) {
+            uiManager.warn(player, "无效模式，可选 ffa / team");
+            return;
+        }
+        String configMode = "team".equals(mode) ? "team" : "free_for_all";
+        plugin.getConfig().set("game.mode", configMode);
+        plugin.saveConfig();
+        uiManager.success(player, "游戏模式已切换为 " + ("team".equals(mode) ? "团队对抗" : "个人混战"));
+    }
+
+    private void handleTeam(Player player, String[] args) {
+        if (teamManager == null) {
+            uiManager.error(player, "团队系统不可用");
+            return;
+        }
+        if (args.length < 2) {
+            uiManager.warn(player, "用法：/he team <join|leave|info|list>");
+            return;
+        }
+
+        String action = args[1].toLowerCase(Locale.ROOT);
+        switch (action) {
+            case "join" -> {
+                if (args.length < 3) {
+                    uiManager.warn(player, "用法：/he team join <red|blue|green|yellow|gold|aqua>");
+                    return;
+                }
+                teamManager.joinTeamByColor(player, args[2]);
+            }
+            case "leave" -> teamManager.leaveTeam(player);
+            case "info" -> {
+                int teamId = teamManager.getTeamIdForPlayer(player.getUniqueId());
+                if (teamId < 0) {
+                    uiManager.warn(player, "你未加入任何队伍");
+                    return;
+                }
+                List<String> lines = teamManager.getTeamInfoLines(teamId);
+                for (String line : lines) {
+                    player.sendMessage(line);
+                }
+            }
+            case "list" -> {
+                Map<Integer, String> teams = teamManager.getTeamListDisplay();
+                if (teams.isEmpty()) {
+                    uiManager.info(player, "暂无队伍");
+                    return;
+                }
+                uiManager.info(player, "=== 队伍列表 ===");
+                for (Map.Entry<Integer, String> entry : teams.entrySet()) {
+                    player.sendMessage("  #" + entry.getKey() + " " + entry.getValue());
+                }
+            }
+            default -> uiManager.warn(player, "用法：/he team <join|leave|info|list>");
+        }
     }
 
     private void handlePanel(Player player, String[] args) {

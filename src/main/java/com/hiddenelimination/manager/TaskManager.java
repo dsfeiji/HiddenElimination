@@ -145,6 +145,7 @@ public final class TaskManager {
 
     private GameManager gameManager;
     private PowerupManager powerupManager;
+    private TeamManager teamManager;
     private BukkitTask nextTaskPublishTask;
     private BukkitTask taskDeadlineTask;
 
@@ -167,6 +168,10 @@ public final class TaskManager {
 
     public void bindPowerupManager(PowerupManager powerupManager) {
         this.powerupManager = powerupManager;
+    }
+
+    public void bindTeamManager(TeamManager teamManager) {
+        this.teamManager = teamManager;
     }
 
     public void startRound() {
@@ -286,6 +291,12 @@ public final class TaskManager {
         PlayerGameData data = playerDataManager.get(killer.getUniqueId());
         if (data != null && !data.isEliminated()) {
             data.addTaskPoints(10);
+            if (teamManager != null && teamManager.isTeamMode()) {
+                var team = teamManager.getPlayerTeam(killer.getUniqueId());
+                if (team != null) {
+                    team.addTeamPoints(10);
+                }
+            }
             uiManager.success(killer, "[任务] 击杀奖励：+10 积分");
         }
     }
@@ -596,6 +607,12 @@ public final class TaskManager {
             }
 
             data.deductTaskPoints(penalty);
+            if (teamManager != null && teamManager.isTeamMode()) {
+                var team = teamManager.getPlayerTeam(playerId);
+                if (team != null) {
+                    team.deductTeamPoints(penalty);
+                }
+            }
             int leftLives = data.consumeTaskLife();
             lifeLostPlayers++;
 
@@ -648,6 +665,14 @@ public final class TaskManager {
         int gainedPoints = calculatePoints(rank, task.difficultyTier());
         data.addTaskPoints(gainedPoints);
         data.incrementCompletedTaskCount();
+
+        if (teamManager != null && teamManager.isTeamMode()) {
+            var team = teamManager.getPlayerTeam(playerId);
+            if (team != null) {
+                team.addTeamPoints(gainedPoints);
+                team.incrementCompletedTaskCount();
+            }
+        }
 
         if (rank == 1 && powerupManager != null) {
             powerupManager.rewardFirstFinisher(player);

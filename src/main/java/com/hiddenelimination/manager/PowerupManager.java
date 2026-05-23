@@ -85,6 +85,7 @@ public final class PowerupManager {
     private GameManager gameManager;
     private ConditionManager conditionManager;
     private TaskManager taskManager;
+    private TeamManager teamManager;
     private int pendingFakeBroadcastCount;
 
     public PowerupManager(HiddenEliminationPlugin plugin, PlayerDataManager playerDataManager, UIManager uiManager) {
@@ -108,6 +109,10 @@ public final class PowerupManager {
 
     public void bindTaskManager(TaskManager taskManager) {
         this.taskManager = taskManager;
+    }
+
+    public void bindTeamManager(TeamManager teamManager) {
+        this.teamManager = teamManager;
     }
 
     public void startRound() {
@@ -916,7 +921,7 @@ public final class PowerupManager {
             return;
         }
         int price = pointItem.price(plugin);
-        if (data.getTaskPoints() < price) {
+        if (getPlayerTaskPoints(player.getUniqueId()) < price) {
             uiManager.warn(player, "积分不足，需要 " + price + " 积分。");
             return;
         }
@@ -931,7 +936,7 @@ public final class PowerupManager {
         if (!used) {
             return;
         }
-        data.deductTaskPoints(price);
+        deductPlayerTaskPoints(player.getUniqueId(), price);
         uiManager.success(player, "道具已使用：" + pointItem.displayName + "，消耗 " + price + " 积分。");
     }
 
@@ -1052,6 +1057,12 @@ public final class PowerupManager {
         }
         int gain = Math.max(1, (int) Math.round(price * (0.5 + random.nextDouble())));
         data.addTaskPoints(gain);
+        if (teamManager != null && teamManager.isTeamMode()) {
+            var team = teamManager.getPlayerTeam(player.getUniqueId());
+            if (team != null) {
+                team.addTeamPoints(gain);
+            }
+        }
         uiManager.success(player, "读博结果：获得 +" + gain + " 积分。");
         return true;
     }
@@ -1070,6 +1081,12 @@ public final class PowerupManager {
                 }
                 int lose = 5 + random.nextInt(6);
                 data.deductTaskPoints(lose);
+                if (teamManager != null && teamManager.isTeamMode()) {
+                    var team = teamManager.getPlayerTeam(player.getUniqueId());
+                    if (team != null) {
+                        team.deductTeamPoints(lose);
+                    }
+                }
                 uiManager.warn(player, "读博翻车：失去 " + lose + " 积分。");
                 return true;
             }
@@ -1248,6 +1265,12 @@ public final class PowerupManager {
 
         int gained = removed * oreExchange.points(plugin);
         data.addTaskPoints(gained);
+        if (teamManager != null && teamManager.isTeamMode()) {
+            var team = teamManager.getPlayerTeam(player.getUniqueId());
+            if (team != null) {
+                team.addTeamPoints(gained);
+            }
+        }
         uiManager.success(player, "兑换成功：" + oreExchange.displayName + " x" + removed + "，+" + gained + " 积分");
     }
 
@@ -1287,6 +1310,12 @@ public final class PowerupManager {
         }
 
         data.addTaskPoints(totalGained);
+        if (teamManager != null && teamManager.isTeamMode()) {
+            var team = teamManager.getPlayerTeam(player.getUniqueId());
+            if (team != null) {
+                team.addTeamPoints(totalGained);
+            }
+        }
         uiManager.success(player, "已一键兑换矿物 x" + totalRemoved + "，+" + totalGained + " 积分");
     }
 
@@ -1338,7 +1367,7 @@ public final class PowerupManager {
         }
 
         int price = armorSet.price(plugin);
-        int points = data.getTaskPoints();
+        int points = getPlayerTaskPoints(player.getUniqueId());
         if (points < price) {
             uiManager.warn(player, "积分不足，需要 " + price + " 积分");
             return;
@@ -1350,9 +1379,10 @@ public final class PowerupManager {
             return;
         }
 
-        data.deductTaskPoints(price);
+        deductPlayerTaskPoints(player.getUniqueId(), price);
+        int remaining = getPlayerTaskPoints(player.getUniqueId());
         uiManager.success(player, "强化成功：" + armorSet.displayName + "，强化部位 " + upgradedCount
-                + " 件，消耗 " + price + " 积分，剩余 " + data.getTaskPoints() + " 积分");
+                + " 件，消耗 " + price + " 积分，剩余 " + remaining + " 积分");
     }
 
     private int enchantEquippedArmor(Player player, ArmorSet armorSet) {
@@ -1410,8 +1440,28 @@ public final class PowerupManager {
     }
 
     private int getPlayerTaskPoints(UUID playerId) {
+        if (teamManager != null && teamManager.isTeamMode()) {
+            var team = teamManager.getPlayerTeam(playerId);
+            return team == null ? 0 : team.getTeamPoints();
+        }
         PlayerGameData data = playerDataManager.get(playerId);
         return data == null ? 0 : data.getTaskPoints();
+    }
+
+    private void deductPlayerTaskPoints(UUID playerId, int amount) {
+        if (amount <= 0) {
+            return;
+        }
+        if (teamManager != null && teamManager.isTeamMode()) {
+            var team = teamManager.getPlayerTeam(playerId);
+            if (team != null) {
+                team.deductTeamPoints(amount);
+            }
+        }
+        PlayerGameData data = playerDataManager.get(playerId);
+        if (data != null) {
+            data.deductTaskPoints(amount);
+        }
     }
 
     private long getShieldCooldownRemainSeconds(UUID playerId) {

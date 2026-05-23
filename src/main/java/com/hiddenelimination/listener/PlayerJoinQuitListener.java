@@ -5,6 +5,7 @@ import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.LobbyPanelManager;
 import com.hiddenelimination.manager.PlayerDataManager;
 import com.hiddenelimination.manager.SpawnManager;
+import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.manager.UIManager;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.GameMode;
@@ -27,6 +28,7 @@ public final class PlayerJoinQuitListener implements Listener {
     private final UIManager uiManager;
     private final GameManager gameManager;
     private final LobbyPanelManager lobbyPanelManager;
+    private final TeamManager teamManager;
     private boolean firstLobbyCleanupDone;
 
     public PlayerJoinQuitListener(
@@ -35,7 +37,8 @@ public final class PlayerJoinQuitListener implements Listener {
             SpawnManager spawnManager,
             UIManager uiManager,
             GameManager gameManager,
-            LobbyPanelManager lobbyPanelManager
+            LobbyPanelManager lobbyPanelManager,
+            TeamManager teamManager
     ) {
         this.plugin = plugin;
         this.playerDataManager = playerDataManager;
@@ -43,6 +46,7 @@ public final class PlayerJoinQuitListener implements Listener {
         this.uiManager = uiManager;
         this.gameManager = gameManager;
         this.lobbyPanelManager = lobbyPanelManager;
+        this.teamManager = teamManager;
         this.firstLobbyCleanupDone = false;
     }
 
@@ -81,6 +85,19 @@ public final class PlayerJoinQuitListener implements Listener {
             player.getInventory().setItem(PrepareItemListener.START_ITEM_SLOT, PrepareItemListener.createStartItem());
         }
 
+        if (teamManager != null) {
+            teamManager.giveTeamCompass(player);
+            if (teamManager.isTeamMode()) {
+                int teamId = teamManager.getTeamIdForPlayer(player.getUniqueId());
+                if (teamId >= 0) {
+                    uiManager.info(player, "当前模式：团队对抗，你在 "
+                            + TeamManager.getTeamColor(teamId) + TeamManager.getTeamName(teamId));
+                } else {
+                    uiManager.warn(player, "当前模式：团队对抗，右键指南针选择队伍");
+                }
+            }
+        }
+
         // 如果当前有对局在进行，玩家只能在大厅等待下一局
         if (gameManager.isRunning()) {
             player.setGameMode(GameMode.ADVENTURE);
@@ -96,6 +113,15 @@ public final class PlayerJoinQuitListener implements Listener {
 
         player.setGameMode(GameMode.ADVENTURE);
         uiManager.info(player, "欢迎来到 HiddenElimination，已传送到大厅");
+        if (teamManager != null && teamManager.isTeamMode()) {
+            int teamId = teamManager.getTeamIdForPlayer(player.getUniqueId());
+            if (teamId >= 0) {
+                uiManager.info(player, "当前模式：团队对抗，你在 "
+                        + TeamManager.getTeamColor(teamId) + TeamManager.getTeamName(teamId));
+            } else {
+                uiManager.warn(player, "当前模式：团队对抗，你尚未加入队伍。使用 /he team join <颜色> 加入");
+            }
+        }
     }
 
     @EventHandler
@@ -103,6 +129,9 @@ public final class PlayerJoinQuitListener implements Listener {
         Player player = event.getPlayer();
 
         if (gameManager.isRunning()) {
+            if (teamManager != null) {
+                teamManager.handleQuit(player.getUniqueId());
+            }
             gameManager.handleQuit(player);
             return;
         }

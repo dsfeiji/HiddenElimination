@@ -2,6 +2,7 @@ package com.hiddenelimination.listener;
 
 import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.PlayerDataManager;
+import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.manager.UIManager;
 import com.hiddenelimination.model.PlayerGameData;
 import org.bukkit.ChatColor;
@@ -11,6 +12,9 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerDropItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
@@ -37,13 +41,15 @@ public final class PrepareItemListener implements Listener {
     private final PlayerDataManager playerDataManager;
     private final GameManager gameManager;
     private final UIManager uiManager;
+    private final TeamManager teamManager;
 
     private final Map<UUID, Long> lastClickTime = new ConcurrentHashMap<>();
 
-    public PrepareItemListener(PlayerDataManager playerDataManager, GameManager gameManager, UIManager uiManager) {
+    public PrepareItemListener(PlayerDataManager playerDataManager, GameManager gameManager, UIManager uiManager, TeamManager teamManager) {
         this.playerDataManager = playerDataManager;
         this.gameManager = gameManager;
         this.uiManager = uiManager;
+        this.teamManager = teamManager;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
@@ -60,6 +66,17 @@ public final class PrepareItemListener implements Listener {
 
         ItemStack item = event.getItem();
         if (item == null) {
+            return;
+        }
+
+        if (teamManager != null && teamManager.isTeamCompass(item)) {
+            Player player = event.getPlayer();
+            if (isDebounced(player.getUniqueId())) {
+                denyDefaultUse(event);
+                return;
+            }
+            denyDefaultUse(event);
+            teamManager.openTeamSelectMenu(player);
             return;
         }
 
@@ -105,6 +122,14 @@ public final class PrepareItemListener implements Listener {
         if (gameManager.isRunning()) {
             uiManager.error(player, "游戏进行中，无法切换准备");
             return;
+        }
+
+        if (teamManager != null && teamManager.isTeamMode()) {
+            int teamId = teamManager.getTeamIdForPlayer(player.getUniqueId());
+            if (teamId < 0) {
+                uiManager.warn(player, "团队模式下请先选择队伍再准备");
+                return;
+            }
         }
 
         PlayerGameData data = playerDataManager.getOrCreate(player.getUniqueId());
@@ -161,5 +186,27 @@ public final class PrepareItemListener implements Listener {
             item.setItemMeta(meta);
         }
         return item;
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onTeamMenuClick(InventoryClickEvent event) {
+        if (teamManager == null || !teamManager.isTeamMenu(event.getView().getTitle())) {
+            return;
+        }
+        teamManager.handleTeamMenuClick(event);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onTeamMenuDrag(InventoryDragEvent event) {
+        if (teamManager != null && teamManager.isTeamMenu(event.getView().getTitle())) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = false)
+    public void onDropTeamCompass(PlayerDropItemEvent event) {
+        if (teamManager != null && teamManager.isTeamCompass(event.getItemDrop().getItemStack())) {
+            event.setCancelled(true);
+        }
     }
 }
