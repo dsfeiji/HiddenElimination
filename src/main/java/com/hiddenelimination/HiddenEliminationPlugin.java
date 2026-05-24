@@ -119,7 +119,7 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
                 this
         );
         getServer().getPluginManager().registerEvents(
-                new GameListener(gameManager, conditionManager, spawnManager, taskManager, teamManager),
+                new GameListener(gameManager, conditionManager, spawnManager, taskManager, teamManager, powerupManager),
                 this
         );
         getServer().getPluginManager().registerEvents(

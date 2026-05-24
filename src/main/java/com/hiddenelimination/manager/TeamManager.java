@@ -373,6 +373,17 @@ public final class TeamManager {
             team.memberEliminated(memberId);
         }
 
+        Player triggerPlayer = plugin.getServer().getPlayer(triggerPlayerId);
+        if (triggerPlayer != null && triggerPlayer.isOnline()) {
+            gameManager.eliminatePlayerSilent(triggerPlayer, "触发已公开淘汰条件（团队连坐）：" + triggeredCondition.getDisplayName());
+        } else {
+            PlayerGameData data = playerDataManager.get(triggerPlayerId);
+            if (data != null && !data.isEliminated()) {
+                data.setEliminated(true);
+                data.setSpectator(true);
+            }
+        }
+
         team.memberEliminated(triggerPlayerId);
         team.setEliminated(true);
         team.setEliminatedAtMillis(System.currentTimeMillis());

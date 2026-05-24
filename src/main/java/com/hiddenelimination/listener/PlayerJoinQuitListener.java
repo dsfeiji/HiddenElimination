@@ -92,8 +92,6 @@ public final class PlayerJoinQuitListener implements Listener {
                 if (teamId >= 0) {
                     uiManager.info(player, "当前模式：团队对抗，你在 "
                             + TeamManager.getTeamColor(teamId) + TeamManager.getTeamName(teamId));
-                } else {
-                    uiManager.warn(player, "当前模式：团队对抗，右键指南针选择队伍");
                 }
             }
         }

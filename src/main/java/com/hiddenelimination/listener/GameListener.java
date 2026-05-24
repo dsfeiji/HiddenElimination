@@ -2,18 +2,21 @@ package com.hiddenelimination.listener;
 
 import com.hiddenelimination.manager.ConditionManager;
 import com.hiddenelimination.manager.GameManager;
+import com.hiddenelimination.manager.PowerupManager;
 import com.hiddenelimination.manager.SpawnManager;
 import com.hiddenelimination.manager.TaskManager;
+import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.model.ConditionType;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Statistic;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.block.BlockState;
-import org.bukkit.block.Chest;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
@@ -40,8 +43,6 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerStatisticIncrementEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.event.player.PlayerToggleSprintEvent;
-import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -54,12 +55,16 @@ public final class GameListener implements Listener {
     private final ConditionManager conditionManager;
     private final SpawnManager spawnManager;
     private final TaskManager taskManager;
+    private final TeamManager teamManager;
+    private final PowerupManager powerupManager;
 
-    public GameListener(GameManager gameManager, ConditionManager conditionManager, SpawnManager spawnManager, TaskManager taskManager) {
+    public GameListener(GameManager gameManager, ConditionManager conditionManager, SpawnManager spawnManager, TaskManager taskManager, TeamManager teamManager, PowerupManager powerupManager) {
         this.gameManager = gameManager;
         this.conditionManager = conditionManager;
         this.spawnManager = spawnManager;
         this.taskManager = taskManager;
+        this.teamManager = teamManager;
+        this.powerupManager = powerupManager;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -75,13 +80,9 @@ public final class GameListener implements Listener {
         conditionManager.handleConditionTrigger(event.getPlayer(), ConditionType.JUMP);
     }
 
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onPlayerAttack(EntityDamageByEntityEvent event) {
         if (!gameManager.isRunning()) {
-            return;
-        }
-
-        if (!(event.getEntity() instanceof Player)) {
             return;
         }
 
@@ -90,7 +91,22 @@ public final class GameListener implements Listener {
             return;
         }
 
-        conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_PLAYER);
+        if (event.getEntity() instanceof Player victim) {
+            if (teamManager != null && teamManager.isTeamMode() && !isTeamFriendlyFireEnabled()) {
+                int attackerTeam = teamManager.getTeamIdForPlayer(attacker.getUniqueId());
+                int victimTeam = teamManager.getTeamIdForPlayer(victim.getUniqueId());
+                if (attackerTeam >= 0 && attackerTeam == victimTeam) {
+                    event.setCancelled(true);
+                    return;
+                }
+            }
+            conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_PLAYER);
+            return;
+        }
+
+        if (event.getEntity() instanceof LivingEntity living && !(living instanceof ArmorStand)) {
+            conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_MOB);
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -101,21 +117,6 @@ public final class GameListener implements Listener {
 
         if (event.getEntity() instanceof Player player) {
             conditionManager.handleConditionTrigger(player, ConditionType.TAKE_DAMAGE);
-        }
-    }
-
-    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    public void onFallDamage(EntityDamageEvent event) {
-        if (!gameManager.isRunning()) {
-            return;
-        }
-
-        if (!(event.getEntity() instanceof Player player)) {
-            return;
-        }
-
-        if (event.getCause() == EntityDamageEvent.DamageCause.FALL) {
-            conditionManager.handleConditionTrigger(player, ConditionType.TAKE_FALL_DAMAGE);
         }
     }
 
@@ -251,6 +252,8 @@ public final class GameListener implements Listener {
         Player victim = event.getEntity();
         Player killer = victim.getKiller();
 
+        event.getDrops().removeIf(powerupManager::isMenuCompass);
+
         taskManager.handlePlayerDeath(victim);
         if (killer != null) {
             taskManager.handlePlayerKill(killer);
@@ -264,7 +267,24 @@ public final class GameListener implements Listener {
         Player player = event.getPlayer();
 
         if (gameManager.isRunning()) {
-            gameManager.ensureSpectatorState(player);
+            var data = gameManager.getPlayerData(player.getUniqueId());
+            if (data != null && data.isEliminated()) {
+                gameManager.ensureSpectatorState(player);
+                return;
+            }
+
+            World gameWorld = spawnManager.getGameWorld();
+            if (gameWorld != null) {
+                event.setRespawnLocation(gameWorld.getSpawnLocation());
+            }
+
+            JavaPlugin plugin = JavaPlugin.getProvidingPlugin(GameListener.class);
+            plugin.getServer().getScheduler().runTaskLater(plugin, () -> {
+                if (!player.isOnline()) {
+                    return;
+                }
+                gameManager.givePowerupCompass(player);
+            }, 2L);
             return;
         }
 
@@ -287,6 +307,9 @@ public final class GameListener implements Listener {
             if (player.hasPermission("hiddenelimination.admin") || player.isOp()) {
                 player.getInventory().setItem(PrepareItemListener.START_ITEM_SLOT, PrepareItemListener.createStartItem());
             }
+            if (teamManager != null) {
+                teamManager.giveTeamCompass(player);
+            }
         }, 2L);
     }
 
@@ -300,14 +323,7 @@ public final class GameListener implements Listener {
             return;
         }
 
-        conditionManager.handleConditionTrigger(player, ConditionType.OPEN_INVENTORY);
-
-        Inventory inventory = event.getInventory();
-        if (isChestInventory(inventory)) {
-            conditionManager.handleConditionTrigger(player, ConditionType.OPEN_CHEST);
-        }
-
-        InventoryType type = inventory.getType();
+        InventoryType type = event.getInventory().getType();
         if (type == InventoryType.WORKBENCH) {
             conditionManager.handleConditionTrigger(player, ConditionType.USE_CRAFTING_TABLE);
         }
@@ -426,27 +442,6 @@ public final class GameListener implements Listener {
         return null;
     }
 
-    private boolean isChestInventory(Inventory inventory) {
-        InventoryType type = inventory.getType();
-
-        if (type == InventoryType.CHEST) {
-            return true;
-        }
-
-        InventoryHolder holder = inventory.getHolder();
-        if (holder instanceof Chest) {
-            return true;
-        }
-
-        if (holder instanceof BlockState blockState) {
-            Block block = blockState.getBlock();
-            Material material = block.getType();
-            return material == Material.CHEST || material == Material.TRAPPED_CHEST;
-        }
-
-        return false;
-    }
-
     private boolean isWater(Material material) {
         return material == Material.WATER || material == Material.BUBBLE_COLUMN;
     }
@@ -484,5 +479,10 @@ public final class GameListener implements Listener {
             return player.getInventory().getBoots() == null;
         }
         return false;
+    }
+
+    private boolean isTeamFriendlyFireEnabled() {
+        return JavaPlugin.getProvidingPlugin(GameListener.class)
+                .getConfig().getBoolean("game.team-friendly-fire", false);
     }
 }

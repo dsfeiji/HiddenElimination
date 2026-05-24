@@ -78,7 +78,6 @@ public final class TaskManager {
         STOP_MOVING("停止移动", 3, ConditionType.STOP_MOVING),
         STAND_ON_STONE("站在石头上", 2, ConditionType.STAND_ON_STONE),
         BLOCK_OVERHEAD("头顶有方块遮挡", 2, ConditionType.BLOCK_OVERHEAD),
-        NO_BLOCK_OVERHEAD("头顶无方块遮挡", 1, ConditionType.NO_BLOCK_OVERHEAD),
         HAS_WEAPON("背包中有武器", 2, ConditionType.HAS_WEAPON),
         HAS_FOOD("背包中有食物", 1, ConditionType.HAS_FOOD),
         HAS_ORE("背包中有矿物", 2, ConditionType.HAS_ORE),

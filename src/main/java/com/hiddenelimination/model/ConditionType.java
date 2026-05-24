@@ -28,10 +28,7 @@ public enum ConditionType {
     DIE("死亡"),
     STAND_ON_STONE("站在石头上"),
     NOT_ON_GRASS_BLOCK("没有站在草方块上"),
-    NOT_ON_STONE("没有站在石头上"),
-    NOT_ON_FARMLAND("没有站在耕地上"),
     BLOCK_OVERHEAD("头顶有方块遮挡"),
-    NO_BLOCK_OVERHEAD("头顶无方块遮挡"),
     HAS_WEAPON("背包中有武器"),
     HAS_FOOD("背包中有食物"),
     HAS_ORE("背包中有矿物"),
@@ -50,8 +47,8 @@ public enum ConditionType {
 
     public boolean isStatePolled() {
         return switch (this) {
-            case STAND_ON_GRASS_BLOCK, STAND_ON_STONE, NOT_ON_GRASS_BLOCK, NOT_ON_STONE, NOT_ON_FARMLAND,
-                 BLOCK_OVERHEAD, NO_BLOCK_OVERHEAD, HOLD_ANY_ITEM, HAS_WEAPON, HAS_FOOD, HAS_ORE, HAS_TOOL,
+            case STAND_ON_GRASS_BLOCK, STAND_ON_STONE, NOT_ON_GRASS_BLOCK,
+                 BLOCK_OVERHEAD, HOLD_ANY_ITEM, HAS_WEAPON, HAS_FOOD, HAS_ORE, HAS_TOOL,
                  STOP_MOVING, NOT_SNEAKING -> true;
             default -> false;
         };

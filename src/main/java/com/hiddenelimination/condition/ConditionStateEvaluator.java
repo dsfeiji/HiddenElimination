@@ -56,10 +56,7 @@ public final class ConditionStateEvaluator {
             case STAND_ON_GRASS_BLOCK -> isStandingOn(player, Material.GRASS_BLOCK);
             case STAND_ON_STONE -> isStandingOnStone(player);
             case NOT_ON_GRASS_BLOCK -> !isStandingOn(player, Material.GRASS_BLOCK);
-            case NOT_ON_STONE -> !isStandingOnStone(player);
-            case NOT_ON_FARMLAND -> !isStandingOn(player, Material.FARMLAND);
             case BLOCK_OVERHEAD -> hasBlockOverhead(player);
-            case NO_BLOCK_OVERHEAD -> !hasBlockOverhead(player);
             case HOLD_ANY_ITEM -> holdsAnyItem(player);
             case HAS_WEAPON -> hasWeaponInInventory(player);
             case HAS_FOOD -> hasFoodInInventory(player);
