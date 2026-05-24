@@ -4,7 +4,6 @@ import com.hiddenelimination.manager.ConditionManager;
 import com.hiddenelimination.manager.GameManager;
 import com.hiddenelimination.manager.SpawnManager;
 import com.hiddenelimination.manager.TaskManager;
-import com.hiddenelimination.manager.TeamManager;
 import com.hiddenelimination.model.ConditionType;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -12,9 +11,9 @@ import org.bukkit.Material;
 import org.bukkit.Statistic;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
-import org.bukkit.entity.ArmorStand;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.Chest;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
@@ -41,6 +40,8 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerStatisticIncrementEvent;
 import org.bukkit.event.player.PlayerToggleSneakEvent;
 import org.bukkit.event.player.PlayerToggleSprintEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -53,14 +54,12 @@ public final class GameListener implements Listener {
     private final ConditionManager conditionManager;
     private final SpawnManager spawnManager;
     private final TaskManager taskManager;
-    private final TeamManager teamManager;
 
-    public GameListener(GameManager gameManager, ConditionManager conditionManager, SpawnManager spawnManager, TaskManager taskManager, TeamManager teamManager) {
+    public GameListener(GameManager gameManager, ConditionManager conditionManager, SpawnManager spawnManager, TaskManager taskManager) {
         this.gameManager = gameManager;
         this.conditionManager = conditionManager;
         this.spawnManager = spawnManager;
         this.taskManager = taskManager;
-        this.teamManager = teamManager;
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -76,9 +75,13 @@ public final class GameListener implements Listener {
         conditionManager.handleConditionTrigger(event.getPlayer(), ConditionType.JUMP);
     }
 
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onPlayerAttack(EntityDamageByEntityEvent event) {
         if (!gameManager.isRunning()) {
+            return;
+        }
+
+        if (!(event.getEntity() instanceof Player)) {
             return;
         }
 
@@ -87,23 +90,7 @@ public final class GameListener implements Listener {
             return;
         }
 
-        if (event.getEntity() instanceof Player victim) {
-            if (teamManager != null && teamManager.isTeamMode() && !isTeamFriendlyFireEnabled()) {
-                int attackerTeam = teamManager.getTeamIdForPlayer(attacker.getUniqueId());
-                int victimTeam = teamManager.getTeamIdForPlayer(victim.getUniqueId());
-                if (attackerTeam >= 0 && attackerTeam == victimTeam) {
-                    event.setCancelled(true);
-                    return;
-                }
-            }
-            conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_PLAYER);
-            return;
-        }
-
-        if (event.getEntity() instanceof LivingEntity living
-                && !(living instanceof ArmorStand)) {
-            conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_MOB);
-        }
+        conditionManager.handleConditionTrigger(attacker, ConditionType.ATTACK_PLAYER);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -114,6 +101,21 @@ public final class GameListener implements Listener {
 
         if (event.getEntity() instanceof Player player) {
             conditionManager.handleConditionTrigger(player, ConditionType.TAKE_DAMAGE);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onFallDamage(EntityDamageEvent event) {
+        if (!gameManager.isRunning()) {
+            return;
+        }
+
+        if (!(event.getEntity() instanceof Player player)) {
+            return;
+        }
+
+        if (event.getCause() == EntityDamageEvent.DamageCause.FALL) {
+            conditionManager.handleConditionTrigger(player, ConditionType.TAKE_FALL_DAMAGE);
         }
     }
 
@@ -165,13 +167,11 @@ public final class GameListener implements Listener {
         }
 
         Player player = event.getPlayer();
-        conditionManager.recordPlayerMovement(player, from, to);
 
         if (from.getBlockX() != to.getBlockX() || from.getBlockY() != to.getBlockY() || from.getBlockZ() != to.getBlockZ()) {
             Material stoodOn = to.getBlock().getRelative(BlockFace.DOWN).getType();
             taskManager.handleStandOnBlock(player, stoodOn);
             taskManager.handlePlayerContact(player);
-            checkPlayerContactCondition(player);
         }
 
         taskManager.handleSwimState(player);
@@ -221,7 +221,6 @@ public final class GameListener implements Listener {
         }
 
         taskManager.handleCraft(player, result.getType());
-        conditionManager.handleConditionTrigger(player, ConditionType.CRAFT_ITEM);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -252,7 +251,6 @@ public final class GameListener implements Listener {
         Player victim = event.getEntity();
         Player killer = victim.getKiller();
 
-        conditionManager.handleConditionTrigger(victim, ConditionType.DIE);
         taskManager.handlePlayerDeath(victim);
         if (killer != null) {
             taskManager.handlePlayerKill(killer);
@@ -289,9 +287,6 @@ public final class GameListener implements Listener {
             if (player.hasPermission("hiddenelimination.admin") || player.isOp()) {
                 player.getInventory().setItem(PrepareItemListener.START_ITEM_SLOT, PrepareItemListener.createStartItem());
             }
-            if (teamManager != null) {
-                teamManager.giveTeamCompass(player);
-            }
         }, 2L);
     }
 
@@ -305,7 +300,14 @@ public final class GameListener implements Listener {
             return;
         }
 
-        InventoryType type = event.getInventory().getType();
+        conditionManager.handleConditionTrigger(player, ConditionType.OPEN_INVENTORY);
+
+        Inventory inventory = event.getInventory();
+        if (isChestInventory(inventory)) {
+            conditionManager.handleConditionTrigger(player, ConditionType.OPEN_CHEST);
+        }
+
+        InventoryType type = inventory.getType();
         if (type == InventoryType.WORKBENCH) {
             conditionManager.handleConditionTrigger(player, ConditionType.USE_CRAFTING_TABLE);
         }
@@ -412,22 +414,6 @@ public final class GameListener implements Listener {
         }
     }
 
-    private void checkPlayerContactCondition(Player player) {
-        if (player.getGameMode() == GameMode.SPECTATOR || player.getGameMode() == GameMode.CREATIVE) {
-            return;
-        }
-
-        for (Entity entity : player.getNearbyEntities(0.6D, 1.0D, 0.6D)) {
-            if (entity instanceof Player other
-                    && !other.getUniqueId().equals(player.getUniqueId())
-                    && other.getGameMode() != GameMode.SPECTATOR
-                    && other.getGameMode() != GameMode.CREATIVE) {
-                conditionManager.handleConditionTrigger(player, ConditionType.TOUCH_PLAYER);
-                return;
-            }
-        }
-    }
-
     private Player resolveAttacker(Entity damager) {
         if (damager instanceof Player player) {
             return player;
@@ -438,6 +424,27 @@ public final class GameListener implements Listener {
         }
 
         return null;
+    }
+
+    private boolean isChestInventory(Inventory inventory) {
+        InventoryType type = inventory.getType();
+
+        if (type == InventoryType.CHEST) {
+            return true;
+        }
+
+        InventoryHolder holder = inventory.getHolder();
+        if (holder instanceof Chest) {
+            return true;
+        }
+
+        if (holder instanceof BlockState blockState) {
+            Block block = blockState.getBlock();
+            Material material = block.getType();
+            return material == Material.CHEST || material == Material.TRAPPED_CHEST;
+        }
+
+        return false;
     }
 
     private boolean isWater(Material material) {
@@ -477,10 +484,5 @@ public final class GameListener implements Listener {
             return player.getInventory().getBoots() == null;
         }
         return false;
-    }
-
-    private boolean isTeamFriendlyFireEnabled() {
-        return JavaPlugin.getProvidingPlugin(GameListener.class)
-                .getConfig().getBoolean("game.team-friendly-fire", false);
     }
 }
