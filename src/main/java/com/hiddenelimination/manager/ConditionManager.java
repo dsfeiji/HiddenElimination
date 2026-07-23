@@ -35,12 +35,10 @@ public final class ConditionManager {
     private GameManager gameManager;
     private TaskManager taskManager;
     private PowerupManager powerupManager;
-    private TeamManager teamManager;
     private BukkitTask revealTask;
     private BukkitTask conditionPollTask;
     private long revealIntervalSeconds = 180L;
     private long nextRevealEpochSecond = 0L;
-    private static final long RULE_ENABLE_DELAY_MILLIS = 3000L;
 
     private final Map<UUID, Long> lastMoveMillisByPlayer = new HashMap<>();
     private final ConditionStateEvaluator stateEvaluator;
@@ -62,10 +60,6 @@ public final class ConditionManager {
 
     public void bindPowerupManager(PowerupManager powerupManager) {
         this.powerupManager = powerupManager;
-    }
-
-    public void bindTeamManager(TeamManager teamManager) {
-        this.teamManager = teamManager;
     }
 
     public int getConditionPoolSize() {
@@ -157,7 +151,15 @@ public final class ConditionManager {
             }
 
             PlayerGameData data = playerDataManager.get(playerId);
-            if (data == null || data.isEliminated() || !data.isConditionRevealed()) {
+            if (data == null || data.isEliminated()) {
+                continue;
+            }
+
+            if (taskManager != null) {
+                taskManager.pollStateTaskProgress(player, stateEvaluator);
+            }
+
+            if (!data.isConditionRevealed()) {
                 continue;
             }
 
@@ -169,10 +171,6 @@ public final class ConditionManager {
             if (stateEvaluator.matches(player, assigned)) {
                 handleConditionTrigger(player, assigned);
             }
-
-            if (taskManager != null) {
-                taskManager.pollStateTaskProgress(player, stateEvaluator);
-            }
         }
     }
 
@@ -181,7 +179,7 @@ public final class ConditionManager {
             return;
         }
 
-        long activeAt = System.currentTimeMillis() + RULE_ENABLE_DELAY_MILLIS;
+        long activeAt = System.currentTimeMillis() + ruleEnableDelayMillis();
         revealedConditions.add(new RevealedCondition(conditionType, true, activeAt));
         announceRevealedCondition(conditionType);
     }
@@ -208,7 +206,7 @@ public final class ConditionManager {
 
         PlayerGameData selected = unrevealedAlive.get(random.nextInt(unrevealedAlive.size()));
         selected.setConditionRevealed(true);
-        long activeAt = System.currentTimeMillis() + RULE_ENABLE_DELAY_MILLIS;
+        long activeAt = System.currentTimeMillis() + ruleEnableDelayMillis();
         selected.setConditionActiveAtMillis(activeAt);
 
         ConditionType conditionType = selected.getAssignedCondition();
@@ -284,9 +282,19 @@ public final class ConditionManager {
         return System.currentTimeMillis() / 1000L;
     }
 
+    private long ruleEnableDelayMillis() {
+        long seconds = plugin.getConfig().getLong("game.rule-enable-delay-seconds", 10L);
+        return Math.max(1L, seconds) * 1000L;
+    }
+
+    private int ruleEnableDelaySeconds() {
+        return (int) Math.max(1L, plugin.getConfig().getLong("game.rule-enable-delay-seconds", 10L));
+    }
+
     private void announceRevealedCondition(ConditionType conditionType) {
-        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName() + "（3秒后生效）");
-        uiManager.showRuleRevealTitleToAll(conditionType.getDisplayName(), 3);
+        int delaySeconds = ruleEnableDelaySeconds();
+        uiManager.broadcast("[规则] 规则公开：" + conditionType.getDisplayName() + "（" + delaySeconds + "秒后生效）");
+        uiManager.showRuleRevealTitleToAll(conditionType.getDisplayName(), delaySeconds);
         uiManager.playSoundToAll(Sound.BLOCK_BELL_USE, 0.9F, 1.2F);
     }
 }

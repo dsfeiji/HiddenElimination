@@ -59,7 +59,6 @@ public final class HiddenEliminationPlugin extends JavaPlugin {
         this.teamManager.bindGameManager(gameManager);
         this.conditionManager.bindTaskManager(taskManager);
         this.conditionManager.bindPowerupManager(powerupManager);
-        this.conditionManager.bindTeamManager(teamManager);
         this.taskManager.bindGameManager(gameManager);
         this.taskManager.bindPowerupManager(powerupManager);
         this.taskManager.bindTeamManager(teamManager);

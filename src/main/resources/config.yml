@@ -48,6 +48,8 @@ game:
   min-ready-players: 2
   spread-radius: 200
   reveal-interval-seconds: 60
+  # 规则公开后多少秒开始可触发淘汰
+  rule-enable-delay-seconds: 10
   # 0 表示不限时
   round-duration-seconds: 0
 

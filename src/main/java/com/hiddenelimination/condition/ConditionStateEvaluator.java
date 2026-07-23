@@ -5,6 +5,7 @@ import com.hiddenelimination.model.ConditionType;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Tag;
+import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.entity.Player;
@@ -53,10 +54,10 @@ public final class ConditionStateEvaluator {
 
     public boolean matches(Player player, ConditionType type) {
         return switch (type) {
-            case STAND_ON_GRASS_BLOCK -> isStandingOn(player, Material.GRASS_BLOCK);
             case STAND_ON_STONE -> isStandingOnStone(player);
             case NOT_ON_GRASS_BLOCK -> !isStandingOn(player, Material.GRASS_BLOCK);
             case BLOCK_OVERHEAD -> hasBlockOverhead(player);
+            case NO_BLOCK_OVERHEAD -> !hasBlockOverhead(player);
             case HOLD_ANY_ITEM -> holdsAnyItem(player);
             case HAS_WEAPON -> hasWeaponInInventory(player);
             case HAS_FOOD -> hasFoodInInventory(player);
@@ -99,9 +100,23 @@ public final class ConditionStateEvaluator {
     }
 
     private boolean hasBlockOverhead(Player player) {
-        Block headBlock = player.getEyeLocation().getBlock();
-        Material type = headBlock.getType();
-        return !type.isAir() && type.isSolid();
+        Location loc = player.getLocation();
+        World world = loc.getWorld();
+        if (world == null) {
+            return false;
+        }
+
+        int x = loc.getBlockX();
+        int z = loc.getBlockZ();
+        int startY = (int) Math.floor(player.getBoundingBox().getMaxY());
+        int maxY = world.getMaxHeight() - 1;
+
+        for (int y = startY; y <= maxY; y++) {
+            if (!world.getBlockAt(x, y, z).getType().isAir()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean holdsAnyItem(Player player) {

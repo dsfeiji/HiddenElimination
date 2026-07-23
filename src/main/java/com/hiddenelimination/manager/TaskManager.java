@@ -74,12 +74,12 @@ public final class TaskManager {
         EQUIP_ARMOR("穿上护甲", 2, ConditionType.EQUIP_ARMOR),
         TAKE_DAMAGE("受到任意伤害", 2, ConditionType.TAKE_DAMAGE),
         PICKUP_ITEM("捡起物品", 1, ConditionType.PICKUP_ITEM),
-        STAND_ON_GRASS_BLOCK("站在草方块上", 1, ConditionType.STAND_ON_GRASS_BLOCK),
         ATTACK_MOB("攻击生物", 2, ConditionType.ATTACK_MOB),
         HOLD_ANY_ITEM("手持任意物品", 1, ConditionType.HOLD_ANY_ITEM),
         STOP_MOVING("停止移动", 3, ConditionType.STOP_MOVING),
         STAND_ON_STONE("站在石头上", 2, ConditionType.STAND_ON_STONE),
         BLOCK_OVERHEAD("头顶有方块遮挡", 2, ConditionType.BLOCK_OVERHEAD),
+        NO_BLOCK_OVERHEAD("头顶无方块遮挡", 1, ConditionType.NO_BLOCK_OVERHEAD),
         HAS_WEAPON("背包中有武器", 2, ConditionType.HAS_WEAPON),
         HAS_FOOD("背包中有食物", 1, ConditionType.HAS_FOOD),
         HAS_ORE("背包中有矿物", 2, ConditionType.HAS_ORE),
@@ -398,7 +398,6 @@ public final class TaskManager {
             case SMOOTH_STONE -> markProgress(player, TaskType.STAND_ON_SMOOTH_STONE);
             case POLISHED_GRANITE -> markProgress(player, TaskType.STAND_ON_POLISHED_GRANITE);
             case POLISHED_DIORITE -> markProgress(player, TaskType.STAND_ON_POLISHED_DIORITE);
-            case GRASS_BLOCK -> markProgress(player, TaskType.STAND_ON_GRASS_BLOCK);
             default -> {
             }
         }
@@ -632,7 +631,8 @@ public final class TaskManager {
                         // 通知队内所有成员
                         for (UUID memberId : team.getMemberIds()) {
                             Player member = plugin.getServer().getPlayer(memberId);
-                            if (member != null && member.isOnline() && !playerDataManager.get(memberId).isEliminated()) {
+                            PlayerGameData memberData = playerDataManager.get(memberId);
+                            if (member != null && member.isOnline() && memberData != null && !memberData.isEliminated()) {
                                 uiManager.warn(member, "任务失败：-" + penalty + " 积分，团队剩余生命 " + leftTeamLives);
                             }
                         }
