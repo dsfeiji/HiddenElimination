@@ -288,6 +288,11 @@ public final class TeamManager {
             memberMap.computeIfAbsent(teamId, k -> new LinkedHashSet<>()).add(entry.getKey());
         }
 
+        // 从配置读取初始团队生命值
+        int initialTeamLives = gameManager == null 
+                ? Math.max(1, plugin.getConfig().getInt("tasks.lives-per-player", 4))
+                : gameManager.getRoundInitialLives();
+
         for (int teamId = 0; teamId < availableCount; teamId++) {
             Set<UUID> members = memberMap.get(teamId);
             if (members == null || members.isEmpty()) {
@@ -302,6 +307,7 @@ public final class TeamManager {
             }
             TeamData team = new TeamData(teamId, TEAM_COLORS[teamId], TEAM_NAMES[teamId], members);
             team.setAliveMemberIds(aliveSet);
+            team.setTeamLivesRemaining(initialTeamLives);
             teamsById.put(teamId, team);
 
             for (UUID uuid : members) {

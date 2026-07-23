@@ -4,6 +4,7 @@ import com.hiddenelimination.HiddenEliminationPlugin;
 import com.hiddenelimination.condition.ConditionStateEvaluator;
 import com.hiddenelimination.model.ConditionType;
 import com.hiddenelimination.model.PlayerGameData;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.entity.Entity;
@@ -12,6 +13,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -588,6 +590,7 @@ public final class TaskManager {
         int penalty = Math.max(0, plugin.getConfig().getInt("tasks.failure-point-penalty", 4));
         int lifeLostPlayers = 0;
         int eliminatedCount = 0;
+        Set<Integer> processedTeams = new HashSet<>();
 
         for (UUID playerId : gameManager.getActivePlayersSnapshot()) {
             PlayerGameData data = playerDataManager.get(playerId);
@@ -606,22 +609,48 @@ public final class TaskManager {
             }
 
             data.deductTaskPoints(penalty);
+            
+            // 团队模式：扣除团队生命
             if (teamManager != null && teamManager.isTeamMode()) {
                 var team = teamManager.getPlayerTeam(playerId);
                 if (team != null) {
+                    // 避免同一个队伍被重复处理
+                    if (processedTeams.contains(team.getTeamId())) {
+                        continue;
+                    }
+                    processedTeams.add(team.getTeamId());
+                    
                     team.deductTeamPoints(penalty);
-                }
-            }
-            int leftLives = data.consumeTaskLife();
-            lifeLostPlayers++;
-
-            if (leftLives <= 0) {
-                boolean eliminated = gameManager.eliminatePlayer(player, "任务失败且生命耗尽：" + task.taskType().displayName());
-                if (eliminated) {
-                    eliminatedCount++;
+                    int leftTeamLives = team.consumeTeamLife();
+                    lifeLostPlayers++;
+                    
+                    if (leftTeamLives <= 0) {
+                        // 团队生命耗尽，全队淘汰
+                        eliminatedCount += gameManager.eliminateTeamForSharedLife(team, "任务失败且团队生命耗尽：" + task.taskType().displayName());
+                        uiManager.broadcast(team.getTeamColor() + team.getDisplayName() + ChatColor.RESET + " 团队生命耗尽，全队淘汰！");
+                    } else {
+                        // 通知队内所有成员
+                        for (UUID memberId : team.getMemberIds()) {
+                            Player member = plugin.getServer().getPlayer(memberId);
+                            if (member != null && member.isOnline() && !playerDataManager.get(memberId).isEliminated()) {
+                                uiManager.warn(member, "任务失败：-" + penalty + " 积分，团队剩余生命 " + leftTeamLives);
+                            }
+                        }
+                    }
                 }
             } else {
-                uiManager.warn(player, "任务失败：-" + penalty + " 积分，剩余生命 " + leftLives);
+                // 个人模式：扣除个人生命
+                int leftLives = data.consumeTaskLife();
+                lifeLostPlayers++;
+
+                if (leftLives <= 0) {
+                    boolean eliminated = gameManager.eliminatePlayer(player, "任务失败且生命耗尽：" + task.taskType().displayName());
+                    if (eliminated) {
+                        eliminatedCount++;
+                    }
+                } else {
+                    uiManager.warn(player, "任务失败：-" + penalty + " 积分，剩余生命 " + leftLives);
+                }
             }
         }
 

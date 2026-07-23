@@ -302,6 +302,7 @@ public final class GameManager {
         data.setSpectator(true);
         data.setEliminatedAtMillis(System.currentTimeMillis());
         eliminationOrder.add(playerId);
+        markTeamMemberEliminated(playerId);
 
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (player.isOnline()) {
@@ -325,6 +326,31 @@ public final class GameManager {
             return;
         }
 
+        // 团队模式：扣除团队生命
+        if (isTeamMode() && teamManager != null) {
+            TeamData team = teamManager.getPlayerTeam(playerId);
+            if (team != null) {
+                int leftTeamLives = team.consumeTeamLife();
+                
+                if (leftTeamLives <= 0) {
+                    // 团队生命耗尽，全队淘汰
+                    if (killer != null) {
+                        uiManager.broadcast(team.getTeamColor() + team.getDisplayName() + ChatColor.RESET + " 因成员 " + victim.getName() + " 被 " + killer.getName() + " 击杀，团队生命耗尽，全队淘汰！");
+                    } else {
+                        uiManager.broadcast(team.getTeamColor() + team.getDisplayName() + ChatColor.RESET + " 因成员 " + victim.getName() + " 死亡，团队生命耗尽，全队淘汰！");
+                    }
+                    
+                    eliminateTeamForSharedLife(team, "团队生命耗尽");
+                } else {
+                    String reason = killer != null ? "被 " + killer.getName() + " 击杀" : "死亡";
+                    uiManager.broadcast(victim.getName() + " " + reason + "，扣除团队生命，" + team.getTeamColor() + team.getDisplayName() + ChatColor.RESET + " 剩余生命 " + ChatColor.RED + leftTeamLives);
+                    checkWinCondition();
+                }
+                return;
+            }
+        }
+        
+        // 个人模式：扣除个人生命
         int leftLives = data.consumeTaskLife();
 
         if (leftLives <= 0) {
@@ -362,6 +388,7 @@ public final class GameManager {
         data.setSpectator(true);
         data.setEliminatedAtMillis(System.currentTimeMillis());
         eliminationOrder.add(playerId);
+        markTeamMemberEliminated(playerId);
 
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (player.isOnline()) {
@@ -370,6 +397,38 @@ public final class GameManager {
         });
 
         uiManager.info(player, "你被淘汰，原因：" + reason);
+    }
+
+    public int eliminateTeamForSharedLife(TeamData team, String reason) {
+        if (team == null || team.isEliminated()) {
+            return 0;
+        }
+
+        int eliminatedCount = 0;
+        for (UUID memberId : new ArrayList<>(team.getAliveMemberIds())) {
+            Player member = plugin.getServer().getPlayer(memberId);
+            if (member != null && member.isOnline()) {
+                if (eliminatePlayer(member, reason)) {
+                    eliminatedCount++;
+                }
+                continue;
+            }
+
+            PlayerGameData data = playerDataManager.get(memberId);
+            if (data != null && !data.isEliminated()) {
+                data.setEliminated(true);
+                data.setSpectator(true);
+                data.setEliminatedAtMillis(System.currentTimeMillis());
+                eliminationOrder.add(memberId);
+                markTeamMemberEliminated(memberId);
+                eliminatedCount++;
+            }
+        }
+
+        team.setEliminated(true);
+        team.setEliminatedAtMillis(System.currentTimeMillis());
+        checkWinCondition();
+        return eliminatedCount;
     }
 
     public void eliminateEntireTeam(int teamId, UUID triggerPlayerId, ConditionType triggeredCondition) {
@@ -395,6 +454,23 @@ public final class GameManager {
 
         if (isActivePlayer(player.getUniqueId())) {
             eliminatePlayer(player, "中途离开游戏");
+        }
+    }
+
+    private void markTeamMemberEliminated(UUID playerId) {
+        if (!isTeamMode() || teamManager == null) {
+            return;
+        }
+
+        TeamData team = teamManager.getPlayerTeam(playerId);
+        if (team == null) {
+            return;
+        }
+
+        team.memberEliminated(playerId);
+        if (team.getAliveCount() <= 0) {
+            team.setEliminated(true);
+            team.setEliminatedAtMillis(System.currentTimeMillis());
         }
     }
 

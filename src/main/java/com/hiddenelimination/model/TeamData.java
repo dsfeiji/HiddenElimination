@@ -17,6 +17,7 @@ public final class TeamData {
     private int completedTaskCount;
     private boolean eliminated;
     private long eliminatedAtMillis;
+    private int teamLivesRemaining;
 
     public TeamData(int teamId, ChatColor teamColor, String displayName, Set<UUID> memberIds) {
         this.teamId = teamId;
@@ -28,6 +29,7 @@ public final class TeamData {
         this.completedTaskCount = 0;
         this.eliminated = false;
         this.eliminatedAtMillis = 0L;
+        this.teamLivesRemaining = 0;
     }
 
     public int getTeamId() {
@@ -120,5 +122,26 @@ public final class TeamData {
 
     public String getColoredDisplayName() {
         return teamColor + displayName + ChatColor.RESET;
+    }
+
+    public int getTeamLivesRemaining() {
+        return teamLivesRemaining;
+    }
+
+    public void setTeamLivesRemaining(int teamLivesRemaining) {
+        this.teamLivesRemaining = Math.max(0, teamLivesRemaining);
+    }
+
+    public int consumeTeamLife() {
+        if (teamLivesRemaining > 0) {
+            teamLivesRemaining--;
+        }
+        return teamLivesRemaining;
+    }
+
+    public void addTeamLives(int delta) {
+        if (delta > 0) {
+            this.teamLivesRemaining += delta;
+        }
     }
 }

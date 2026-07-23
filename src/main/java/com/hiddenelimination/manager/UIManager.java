@@ -130,7 +130,17 @@ public final class UIManager {
         if (sender instanceof Player player && taskManager != null) {
             sender.sendMessage(ChatColor.YELLOW + "任务积分: " + ChatColor.WHITE + taskManager.getPlayerTaskPoints(player.getUniqueId()));
             sender.sendMessage(ChatColor.YELLOW + "累计赚取积分: " + ChatColor.WHITE + taskManager.getPlayerTotalEarnedTaskPoints(player.getUniqueId()));
-            sender.sendMessage(ChatColor.YELLOW + "任务生命: " + ChatColor.WHITE + taskManager.getPlayerTaskLives(player.getUniqueId()));
+            
+            if (teamManager != null && teamManager.isTeamMode()) {
+                TeamData team = teamManager.getPlayerTeam(player.getUniqueId());
+                if (team != null) {
+                    sender.sendMessage(ChatColor.YELLOW + "团队生命: " + ChatColor.WHITE + team.getTeamLivesRemaining());
+                } else {
+                    sender.sendMessage(ChatColor.YELLOW + "团队生命: " + ChatColor.WHITE + "0");
+                }
+            } else {
+                sender.sendMessage(ChatColor.YELLOW + "任务生命: " + ChatColor.WHITE + taskManager.getPlayerTaskLives(player.getUniqueId()));
+            }
             if (taskManager.hasActiveTask()) {
                 sender.sendMessage(ChatColor.YELLOW + "当前任务: " + ChatColor.WHITE + taskManager.getCurrentTaskDisplay());
             }
@@ -236,7 +246,6 @@ public final class UIManager {
 
     private void updateGameActionBar(Player player) {
         long ruleRemain = conditionManager.getSecondsUntilNextReveal();
-        int lives = taskManager.getPlayerTaskLives(player.getUniqueId());
         String taskText;
         if (taskManager.hasActiveTask()) {
             taskText = ChatColor.GREEN + "当前任务: " + ChatColor.WHITE + taskManager.getCurrentTaskName()
@@ -244,7 +253,19 @@ public final class UIManager {
         } else {
             taskText = ChatColor.GREEN + "下个任务: " + ChatColor.AQUA + formatSeconds(taskManager.getSecondsUntilNextTaskPublish());
         }
-        String livesText = ChatColor.RED + "当前生命: " + ChatColor.WHITE + lives;
+        
+        String livesText;
+        if (teamManager != null && teamManager.isTeamMode()) {
+            TeamData team = teamManager.getPlayerTeam(player.getUniqueId());
+            if (team != null) {
+                livesText = ChatColor.RED + "团队生命: " + ChatColor.WHITE + team.getTeamLivesRemaining();
+            } else {
+                livesText = ChatColor.RED + "团队生命: " + ChatColor.WHITE + "0";
+            }
+        } else {
+            int lives = taskManager.getPlayerTaskLives(player.getUniqueId());
+            livesText = ChatColor.RED + "当前生命: " + ChatColor.WHITE + lives;
+        }
 
         String text = ChatColor.GOLD + "下次公开规则: " + ChatColor.YELLOW + formatSeconds(ruleRemain)
                 + ChatColor.DARK_GRAY + " | " + taskText
